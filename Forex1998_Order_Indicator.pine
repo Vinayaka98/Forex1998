@@ -1,5 +1,5 @@
 //@version=5
-indicator("Forex1998 Trading Order Indicator", "F98 Orders", true, max_bars_back=5000, max_labels_count=200, max_lines_count=100)
+indicator("Forex1998 Blueprint Order Indicator", "F98 Blueprint", true, max_bars_back=5000, max_labels_count=200, max_lines_count=100)
 
 // ══════════════════════════════════════════════════════════
 //  INPUTS
@@ -12,20 +12,32 @@ vpVA    = input.float(69, "Value Area %", minval=50, maxval=95, step=1, group=g1
 showWk  = input.bool(true, "Show Weekly Levels", group=g1)
 showMo  = input.bool(true, "Show Monthly Levels", group=g1)
 
-// ── Signals (V11 Hybrid — backtested parameters) ──
-g2      = "Signal Settings"
-proxPct = input.float(0.2, "VP Level Proximity %", minval=0.05, maxval=2.0, step=0.05, group=g2, tooltip="Price must be within this % of a VP level to trigger. Backtested optimum: 0.2%")
-rsiOB   = input.int(65, "RSI Overbought", minval=55, maxval=80, group=g2, tooltip="RSI threshold for sell signals (backtested: 65)")
-rsiOS   = input.int(35, "RSI Oversold", minval=20, maxval=45, group=g2, tooltip="RSI threshold for buy signals (backtested: 35)")
-cdBars  = input.int(5, "Signal Cooldown (bars)", minval=1, maxval=50, group=g2, tooltip="Min bars between consecutive same-direction signals.")
-holdBars = input.int(15, "Suggested Hold (bars)", minval=5, maxval=50, group=g2, tooltip="Suggested exit bars after entry. Backtested optimum: 15-20 bars on 4H.")
+// ── Strategy ──
+g2      = "Strategy Settings"
+stratMode = input.string("AUTO", "Strategy Mode", options=["AUTO", "A: Trend Pullback", "B: Range Reversion", "V11: Hybrid"], group=g2, tooltip="AUTO selects Strategy A in trends, B in ranges. V11 uses oscillator extremes.")
+proxATR = input.float(0.5, "VP Proximity (ATR)", minval=0.1, maxval=3.0, step=0.1, group=g2, tooltip="Blueprint: 0.5 ATR. ATR-normalized distance to VP level.")
+minQuality = input.int(55, "Min Quality Score", minval=0, maxval=100, group=g2, tooltip="Blueprint: 55. Weighted quality score threshold (0-100).")
+rrMin   = input.float(1.5, "Min R:R Ratio", minval=0.0, maxval=5.0, step=0.1, group=g2, tooltip="Blueprint: 1.5. Minimum reward-to-risk ratio.")
+cdBars  = input.int(6, "Signal Cooldown (bars)", minval=1, maxval=50, group=g2, tooltip="Blueprint: 6. Min bars between signals.")
+atrBuf  = input.float(0.2, "Stop ATR Buffer", minval=0.0, maxval=1.0, step=0.05, group=g2, tooltip="Blueprint: 0.2. ATR multiplier below swing low (buy) or above swing high (sell).")
+
+// ── Exit ──
+g2b     = "Exit Settings"
+exitMode = input.string("R2_Target", "Exit Model", options=["R2_Target", "R1.5_Target", "Struct_Trail", "Struct_Trail_BE", "Time_15bar", "Time_20bar"], group=g2b, tooltip="R2_Target (best PF 1.95), Time_15bar (best WR), Struct_Trail (trailing stop)")
+holdBars = input.int(20, "Time Exit Bars", minval=5, maxval=50, group=g2b, tooltip="Bars until time-based exit (if Time exit selected).")
+
+// ── V11 Hybrid Oscillator Thresholds ──
+g2c     = "V11 Hybrid (if selected)"
+rsiOB   = input.int(65, "RSI Overbought", minval=55, maxval=80, group=g2c)
+rsiOS   = input.int(35, "RSI Oversold", minval=20, maxval=45, group=g2c)
 
 // ── Display ──
 g3      = "Display"
-showTbl = input.bool(true, "Show Score Dashboard", group=g3)
+showTbl = input.bool(true, "Show Dashboard", group=g3)
 tblPos  = input.string("Top Right", "Dashboard Position", options=["Top Right", "Top Left", "Bottom Right", "Bottom Left"], group=g3)
-showBg  = input.bool(true, "Trend Background Tint", group=g3)
+showBg  = input.bool(true, "Regime Background Tint", group=g3)
 showPnd = input.bool(true, "Pending-Order Labels", group=g3)
+showSL  = input.bool(true, "Show Stop/Target Lines", group=g3)
 
 // ══════════════════════════════════════════════════════════
 //  VOLUME PROFILE — core calculation
@@ -121,69 +133,56 @@ if moHi > moLo
 [moPOC, moVAH, moVAL] = vpCalc(moBins, moHi, moLo, moVol, vpRows, vpVA)
 
 // ══════════════════════════════════════════════════════════
-//  OSCILLATORS  (11 — matches TradingView Technicals)
-//  Each returns  1 = Buy,  0 = Neutral,  -1 = Sell
+//  INDICATORS
 // ══════════════════════════════════════════════════════════
 
-// 1  RSI (14)
+// ATR
+float atrV = ta.atr(14)
+
+// ── 11 Oscillators (TradingView Technicals match) ──
 float rsiV = ta.rsi(close, 14)
 int   sRsi = rsiV < 30 ? 1 : rsiV > 70 ? -1 : 0
 
-// 2  Stochastic %K (14, 3, 3)
 float rawK  = ta.sma(ta.stoch(close, high, low, 14), 3)
 float rawD  = ta.sma(rawK, 3)
 int   sStch = rawK < 20 ? 1 : rawK > 80 ? -1 : 0
 
-// 3  CCI (20)
 float cciV = ta.cci(close, 20)
 int   sCci = cciV < -100 ? 1 : cciV > 100 ? -1 : 0
 
-// 4  ADX (14) — direction from DI+/DI-
 [dip, dim, adxV] = ta.dmi(14, 14)
 int sAdx = adxV > 20 and dip > dim ? 1 : adxV > 20 and dim > dip ? -1 : 0
 
-// 5  Awesome Oscillator
 float aoV = ta.sma(hl2, 5) - ta.sma(hl2, 34)
 int   sAo = aoV > 0 ? 1 : aoV < 0 ? -1 : 0
 
-// 6  Momentum (10)
 float momV = ta.mom(close, 10)
 int   sMom = momV > 0 ? 1 : momV < 0 ? -1 : 0
 
-// 7  MACD (12, 26, 9)
 [macdL, sigL, _hist] = ta.macd(close, 12, 26, 9)
 int sMacd = macdL > sigL ? 1 : macdL < sigL ? -1 : 0
 
-// 8  Stochastic RSI Fast (3, 3, 14, 14)
 float srRaw = ta.sma(ta.stoch(ta.rsi(close, 14), ta.rsi(close, 14), ta.rsi(close, 14), 14), 3)
 float srD   = ta.sma(srRaw, 3)
 int   sSrsi = srRaw < 20 ? 1 : srRaw > 80 ? -1 : 0
 
-// 9  Williams %R (14)
 float wrV = ta.wpr(14)
 int   sWr = wrV < -80 ? 1 : wrV > -20 ? -1 : 0
 
-// 10  Bull Bear Power
 float bbpV = (high - ta.ema(close, 13)) + (low - ta.ema(close, 13))
 int   sBbp = bbpV > 0 ? 1 : bbpV < 0 ? -1 : 0
 
-// 11  Ultimate Oscillator (7, 14, 28)
 float bp  = close - math.min(low, nz(close[1], low))
 float tr  = math.max(high, nz(close[1], high)) - math.min(low, nz(close[1], low))
 float uoV = 100.0 * (4.0 * math.sum(bp, 7) / math.sum(tr, 7) + 2.0 * math.sum(bp, 14) / math.sum(tr, 14) + math.sum(bp, 28) / math.sum(tr, 28)) / 7.0
 int   sUo = uoV < 30 ? 1 : uoV > 70 ? -1 : 0
 
-// Aggregate oscillator score
 int oscBuy  = (sRsi==1?1:0)+(sStch==1?1:0)+(sCci==1?1:0)+(sAdx==1?1:0)+(sAo==1?1:0)+(sMom==1?1:0)+(sMacd==1?1:0)+(sSrsi==1?1:0)+(sWr==1?1:0)+(sBbp==1?1:0)+(sUo==1?1:0)
 int oscSell = (sRsi==-1?1:0)+(sStch==-1?1:0)+(sCci==-1?1:0)+(sAdx==-1?1:0)+(sAo==-1?1:0)+(sMom==-1?1:0)+(sMacd==-1?1:0)+(sSrsi==-1?1:0)+(sWr==-1?1:0)+(sBbp==-1?1:0)+(sUo==-1?1:0)
 int oscNeut = 11 - oscBuy - oscSell
 float oscScore = (oscBuy - oscSell) / 11.0
 
-// ══════════════════════════════════════════════════════════
-//  MOVING AVERAGES  (15 — matches TradingView Technicals)
-//  Buy when close > MA,  Sell when close < MA
-// ══════════════════════════════════════════════════════════
-
+// ── 15 Moving Averages (TradingView Technicals match) ──
 float e10  = ta.ema(close, 10)
 float s10  = ta.sma(close, 10)
 float e20  = ta.ema(close, 20)
@@ -235,12 +234,7 @@ maSell += close < hma9 ? 1 : 0
 
 int   maNeut  = 15 - maBuy - maSell
 float maScore = (maBuy - maSell) / 15.0
-
-// ══════════════════════════════════════════════════════════
-//  COMPOSITE SCORE  &  RATINGS
-// ══════════════════════════════════════════════════════════
-
-float score = (oscScore + maScore) / 2.0
+float score   = (oscScore + maScore) / 2.0
 
 rating(float s) =>
     s > 0.5 ? "STRONG BUY" : s > 0.1 ? "BUY" : s < -0.5 ? "STRONG SELL" : s < -0.1 ? "SELL" : "NEUTRAL"
@@ -258,39 +252,209 @@ string maR  = rating(maScore)
 string totR = rating(score)
 
 // ══════════════════════════════════════════════════════════
-//  V11 HYBRID SIGNAL GENERATION
-//  Backtested: 91% win rate, +612.5 pips, PF 7.26 on EUR/USD 4H
-//
-//  Entry requires ALL THREE conditions:
-//    1. Oscillator extreme  (RSI/Stoch/WR hit threshold)
-//    2. Near VP level       (within proximity % of VAL or VAH)
-//    3. Momentum confirm    (composite score improving bar-over-bar)
+//  MARKET REGIME ENGINE (Blueprint Section 5)
+//  Weighted bull score: Mo POC 25%, Wk POC 15%, 200 EMA 15%,
+//  50>200 EMA 15%, 50 EMA slope 10%, ADX 10%, HH/HL 10%
 // ══════════════════════════════════════════════════════════
 
-float prox = close * proxPct / 100.0
+float bullScore = 0.0
+bullScore += not na(moPOC) and close > moPOC ? 25.0 : 0.0
+bullScore += not na(wkPOC) and close > wkPOC ? 15.0 : 0.0
+bullScore += not na(e200) and close > e200 ? 15.0 : 0.0
+bullScore += not na(e50) and not na(e200) and e50 > e200 ? 15.0 : 0.0
 
-// ── Condition 1: Oscillator extremes ──
-bool oscOversold  = rsiV < rsiOS or rawK < 25 or wrV < -75
-bool oscOverbought = rsiV > rsiOB or rawK > 75 or wrV > -25
+float ema50Slope = not na(e50[5]) ? (e50 - e50[5]) / nz(e50[5], 1) * 100 : 0.0
+bullScore += ema50Slope > 0.05 ? 10.0 : 0.0
+bullScore += adxV > 25 ? 10.0 : 0.0
 
-// ── Condition 2: Near VP levels ──
-bool nearWkVAL = not na(wkVAL) and math.abs(close - wkVAL) <= prox
-bool nearWkVAH = not na(wkVAH) and math.abs(close - wkVAH) <= prox
-bool nearMoVAL = not na(moVAL) and math.abs(close - moVAL) <= prox
-bool nearMoVAH = not na(moVAH) and math.abs(close - moVAH) <= prox
+int hhCount = 0
+int hlCount = 0
+for k = 2 to 20
+    if high[k] > high[k + 2]
+        hhCount += 1
+    if low[k] > low[k + 2]
+        hlCount += 1
+bullScore += hhCount > 7 and hlCount > 7 ? 10.0 : 0.0
+
+bool adxTrending = adxV > 20
+
+string regime = "TRANSITION"
+if bullScore >= 60 and adxTrending
+    regime := "BULL"
+else if bullScore <= 30 and adxTrending
+    regime := "BEAR"
+else if not adxTrending or (bullScore > 35 and bullScore < 55)
+    regime := "RANGE"
+
+color regimeCol = switch regime
+    "BULL"       => color.new(#00E676, 0)
+    "BEAR"       => color.new(#FF1744, 0)
+    "RANGE"      => color.new(#2979FF, 0)
+    "TRANSITION" => color.new(#FFC107, 0)
+    => color.gray
+
+// ══════════════════════════════════════════════════════════
+//  ATR-NORMALIZED VP PROXIMITY (Blueprint Section 6)
+//  DistanceRatio = abs(Price - VP_Level) / ATR
+// ══════════════════════════════════════════════════════════
+
+float distWkVAL = not na(wkVAL) and atrV > 0 ? math.abs(close - wkVAL) / atrV : 999.0
+float distWkVAH = not na(wkVAH) and atrV > 0 ? math.abs(close - wkVAH) / atrV : 999.0
+float distWkPOC = not na(wkPOC) and atrV > 0 ? math.abs(close - wkPOC) / atrV : 999.0
+float distMoVAL = not na(moVAL) and atrV > 0 ? math.abs(close - moVAL) / atrV : 999.0
+float distMoVAH = not na(moVAH) and atrV > 0 ? math.abs(close - moVAH) / atrV : 999.0
+float distMoPOC = not na(moPOC) and atrV > 0 ? math.abs(close - moPOC) / atrV : 999.0
+
+bool nearWkVAL = distWkVAL <= proxATR
+bool nearWkVAH = distWkVAH <= proxATR
+bool nearWkPOC = distWkPOC <= proxATR
+bool nearMoVAL = distMoVAL <= proxATR
+bool nearMoVAH = distMoVAH <= proxATR
+bool nearMoPOC = distMoPOC <= proxATR
+
 bool nearSup = nearWkVAL or nearMoVAL
 bool nearRes = nearWkVAH or nearMoVAH
+bool nearPOC = nearWkPOC or nearMoPOC
 
-// ── Condition 3: Momentum confirmation ──
+float nearestSup = math.min(distWkVAL, distMoVAL)
+float nearestRes = math.min(distWkVAH, distMoVAH)
+float nearestVP  = math.min(math.min(distWkVAL, distWkVAH), math.min(distMoVAL, distMoVAH))
+
+// ══════════════════════════════════════════════════════════
+//  WEIGHTED QUALITY SCORE (Blueprint Section 8.1)
+//  Regime 25, HT Direction 20, VP Location 20,
+//  Price Confirm 15, Momentum 10, Volatility 5, Oscillators 5
+// ══════════════════════════════════════════════════════════
+
+qualityCalc(string dir, string reg, float vpDist) =>
+    float q = 0.0
+    // Regime alignment (25 pts)
+    q += (reg == "BULL" and dir == "BUY") or (reg == "BEAR" and dir == "SELL") ? 25.0 : reg == "RANGE" ? 15.0 : 0.0
+    // Higher TF direction (20 pts)
+    if dir == "BUY"
+        q += close > e200 ? 20.0 : not na(e200) and math.abs(close - e200) / nz(atrV, 1) < 1 ? 10.0 : 0.0
+    else
+        q += close < e200 ? 20.0 : not na(e200) and math.abs(close - e200) / nz(atrV, 1) < 1 ? 10.0 : 0.0
+    // VP location (20 pts)
+    q += vpDist < 0.3 ? 20.0 : vpDist < 0.5 ? 15.0 : vpDist < 1.0 ? 10.0 : 0.0
+    // Price confirmation (15 pts)
+    q += (dir == "BUY" and close > open) or (dir == "SELL" and close < open) ? 15.0 : 7.0
+    // Momentum (10 pts)
+    q += (rsiV > 30 and rsiV < 70) ? 10.0 : (dir == "BUY" and rsiV < 30) or (dir == "SELL" and rsiV > 70) ? 5.0 : 0.0
+    // Volatility (5 pts)
+    float atrAvg = ta.sma(atrV, 20)
+    q += not na(atrAvg) and atrAvg > 0 and atrV / atrAvg > 0.5 and atrV / atrAvg < 1.5 ? 5.0 : 0.0
+    // Oscillators (5 pts)
+    q += (dir == "BUY" and rawK < 30) or (dir == "SELL" and rawK > 70) ? 5.0 : (rawK >= 30 and rawK <= 70) ? 2.0 : 0.0
+    q
+
+// ══════════════════════════════════════════════════════════
+//  STRUCTURAL STOPS (Blueprint Section 9.2)
+//  Buy: swing low - ATR buffer
+//  Sell: swing high + ATR buffer
+// ══════════════════════════════════════════════════════════
+
+float swingLow10  = ta.lowest(low, 10)
+float swingHigh10 = ta.highest(high, 10)
+
+float buySL  = swingLow10 - atrV * atrBuf
+float sellSL = swingHigh10 + atrV * atrBuf
+
+float buyStopDist  = close - buySL
+float sellStopDist = sellSL - close
+
+// ══════════════════════════════════════════════════════════
+//  SIGNAL GENERATION (Blueprint Strategies A, B, V11)
+// ══════════════════════════════════════════════════════════
+
+// ── Strategy A: Trend Pullback (S7.1) ──
+bool stratA_buy  = regime == "BULL" and (nearSup or nearPOC) and close >= nz(wkVAL, close)
+bool stratA_sell = regime == "BEAR" and (nearRes or nearPOC) and close <= nz(wkVAH, close)
+
+// ── Strategy B: Range Reversion (S7.2) ──
+bool stratB_buy  = regime == "RANGE" and nearSup and close >= nz(math.min(nz(wkVAL, close), nz(moVAL, close)), close)
+bool stratB_sell = regime == "RANGE" and nearRes and close <= nz(math.max(nz(wkVAH, close), nz(moVAH, close)), close)
+
+// ── V11 Hybrid: Oscillator extreme + VP + momentum ──
+bool oscOversold  = rsiV < rsiOS or rawK < 25 or wrV < -75
+bool oscOverbought = rsiV > rsiOB or rawK > 75 or wrV > -25
 float prevScore = nz(score[1], 0)
 bool momBullish = score > prevScore
 bool momBearish = score < prevScore
+bool v11_buy  = oscOversold and nearSup and momBullish and regime != "BEAR"
+bool v11_sell = oscOverbought and nearRes and momBearish and regime != "BULL"
 
-// ── Market orders: all 3 conditions must align ──
-bool mktBuy  = oscOversold  and nearSup and momBullish
-bool mktSell = oscOverbought and nearRes and momBearish
+// ── Select active strategy ──
+bool rawBuy  = false
+bool rawSell = false
+string activeStrat = ""
 
-// Cooldown
+if stratMode == "A: Trend Pullback"
+    rawBuy  := stratA_buy
+    rawSell := stratA_sell
+    activeStrat := "A"
+else if stratMode == "B: Range Reversion"
+    rawBuy  := stratB_buy
+    rawSell := stratB_sell
+    activeStrat := "B"
+else if stratMode == "V11: Hybrid"
+    rawBuy  := v11_buy
+    rawSell := v11_sell
+    activeStrat := "V11"
+else
+    // AUTO: use A in trends, B in ranges, V11 as supplement
+    if regime == "BULL"
+        rawBuy  := stratA_buy or v11_buy
+        activeStrat := stratA_buy ? "A" : "V11"
+    else if regime == "BEAR"
+        rawSell := stratA_sell or v11_sell
+        activeStrat := stratA_sell ? "A" : "V11"
+    else if regime == "RANGE"
+        rawBuy  := stratB_buy or v11_buy
+        rawSell := stratB_sell or v11_sell
+        activeStrat := stratB_buy or stratB_sell ? "B" : "V11"
+
+// ── Hard Vetoes (Blueprint S8.3) ──
+bool vetoTransition = regime == "TRANSITION"
+bool vetoATR = na(atrV) or atrV < syminfo.mintick
+bool vetoCounterRegime = (regime == "BULL" and rawSell) or (regime == "BEAR" and rawBuy)
+
+bool vetoed = vetoTransition or vetoATR
+if vetoCounterRegime and stratMode != "V11: Hybrid"
+    vetoed := true
+
+// ── Quality Gate ──
+float qualBuy  = rawBuy  ? qualityCalc("BUY", regime, nearestSup) : 0.0
+float qualSell = rawSell ? qualityCalc("SELL", regime, nearestRes) : 0.0
+
+bool qualPassBuy  = qualBuy >= minQuality
+bool qualPassSell = qualSell >= minQuality
+
+// ── R:R Gate (Blueprint S9.1) ──
+float buyTarget  = na
+float sellTarget = na
+
+if exitMode == "R2_Target"
+    buyTarget  := close + 2.0 * buyStopDist
+    sellTarget := close - 2.0 * sellStopDist
+else if exitMode == "R1.5_Target"
+    buyTarget  := close + 1.5 * buyStopDist
+    sellTarget := close - 1.5 * sellStopDist
+else
+    buyTarget  := nz(math.max(nz(wkVAH, close), nz(moVAH, close)), close + atrV)
+    sellTarget := nz(math.min(nz(wkVAL, close), nz(moVAL, close)), close - atrV)
+
+float rrBuy  = buyStopDist > 0 ? (buyTarget - close) / buyStopDist : 0.0
+float rrSell = sellStopDist > 0 ? (close - sellTarget) / sellStopDist : 0.0
+
+bool rrPassBuy  = rrBuy >= rrMin
+bool rrPassSell = rrSell >= rrMin
+
+// ── Final Signal ──
+bool mktBuy  = rawBuy  and not vetoed and qualPassBuy  and rrPassBuy
+bool mktSell = rawSell and not vetoed and qualPassSell and rrPassSell
+
+// ── Cooldown ──
 var int lastBuyBar  = -9999
 var int lastSellBar = -9999
 bool buyTrig  = mktBuy  and (bar_index - lastBuyBar  >= cdBars)
@@ -300,45 +464,83 @@ if buyTrig
 if sellTrig
     lastSellBar := bar_index
 
-// ── Suggested exit bar tracking ──
-var int buyExitBar  = na
-var int sellExitBar = na
+// ── Active trade tracking ──
+var float activeSL     = na
+var float activeTP     = na
+var bool  activeIsBuy  = false
+var int   activeEntry  = na
+
 if buyTrig
-    buyExitBar := bar_index + holdBars
+    activeSL    := buySL
+    activeTP    := buyTarget
+    activeIsBuy := true
+    activeEntry := bar_index
+
 if sellTrig
-    sellExitBar := bar_index + holdBars
+    activeSL    := sellSL
+    activeTP    := sellTarget
+    activeIsBuy := false
+    activeEntry := bar_index
 
-bool buyExitNow  = not na(buyExitBar) and bar_index == buyExitBar
-bool sellExitNow = not na(sellExitBar) and bar_index == sellExitBar
+// Exit tracking
+bool timeExit = false
+if not na(activeEntry)
+    int barsHeld = bar_index - activeEntry
+    if exitMode == "Time_15bar" and barsHeld >= 15
+        timeExit := true
+    else if exitMode == "Time_20bar" and barsHeld >= holdBars
+        timeExit := true
 
-if buyExitNow
-    buyExitBar := na
-if sellExitNow
-    sellExitBar := na
+    if activeIsBuy
+        if low <= activeSL or high >= activeTP or timeExit
+            activeSL    := na
+            activeTP    := na
+            activeEntry := na
+    else
+        if high >= activeSL or low <= activeTP or timeExit
+            activeSL    := na
+            activeTP    := na
+            activeEntry := na
 
-// ── Pending orders: VP levels the price hasn't reached yet ──
-//    Oscillators approaching extremes increase pending order confidence
+    // Trailing stop update
+    if (exitMode == "Struct_Trail" or exitMode == "Struct_Trail_BE") and not na(activeSL)
+        if activeIsBuy
+            float newSL = low - atrV * 0.3
+            if newSL > activeSL
+                activeSL := newSL
+            if exitMode == "Struct_Trail_BE" and (high - close[nz(activeEntry, bar_index)]) > buyStopDist * 0.5
+                if activeSL < close[nz(activeEntry, bar_index)]
+                    activeSL := close[nz(activeEntry, bar_index)] + atrV * 0.05
+        else
+            float newSL = high + atrV * 0.3
+            if newSL < activeSL
+                activeSL := newSL
+            if exitMode == "Struct_Trail_BE" and (close[nz(activeEntry, bar_index)] - low) > sellStopDist * 0.5
+                if activeSL > close[nz(activeEntry, bar_index)]
+                    activeSL := close[nz(activeEntry, bar_index)] - atrV * 0.05
+
+// ── Pending Orders ──
 bool oscApproachOS = rsiV < 45 or rawK < 35 or wrV < -55
 bool oscApproachOB = rsiV > 55 or rawK > 65 or wrV > -45
 
-bool pendBuyWk  = not na(wkVAL) and close > wkVAL + prox and oscApproachOS and momBullish
-bool pendBuyMo  = not na(moVAL) and close > moVAL + prox and oscApproachOS and momBullish
-bool pendSellWk = not na(wkVAH) and close < wkVAH - prox and oscApproachOB and momBearish
-bool pendSellMo = not na(moVAH) and close < moVAH - prox and oscApproachOB and momBearish
+bool pendBuyWk  = not na(wkVAL) and distWkVAL > proxATR and distWkVAL < proxATR * 3 and oscApproachOS and regime != "BEAR"
+bool pendBuyMo  = not na(moVAL) and distMoVAL > proxATR and distMoVAL < proxATR * 3 and oscApproachOS and regime != "BEAR"
+bool pendSellWk = not na(wkVAH) and distWkVAH > proxATR and distWkVAH < proxATR * 3 and oscApproachOB and regime != "BULL"
+bool pendSellMo = not na(moVAH) and distMoVAH > proxATR and distMoVAH < proxATR * 3 and oscApproachOB and regime != "BULL"
 
-// ── Signal strength (how many oscillator extremes are active) ──
+// ── Signal Text ──
+string sigText = "WAIT"
+color  sigCol  = color.gray
+
 int oscExtBuy  = (rsiV < rsiOS ? 1 : 0) + (rawK < 25 ? 1 : 0) + (wrV < -75 ? 1 : 0)
 int oscExtSell = (rsiV > rsiOB ? 1 : 0) + (rawK > 75 ? 1 : 0) + (wrV > -25 ? 1 : 0)
 string strength = oscExtBuy >= 2 or oscExtSell >= 2 ? "STRONG" : "NORMAL"
 
-// Primary signal for the dashboard
-string sigText = "WAIT"
-color  sigCol  = color.gray
-if mktBuy
-    sigText := "MKT BUY (" + strength + ")"
+if buyTrig
+    sigText := "MKT BUY [" + activeStrat + "] Q:" + str.tostring(qualBuy, "#") + " R:" + str.tostring(rrBuy, "#.#")
     sigCol  := color.new(#00E676, 0)
-else if mktSell
-    sigText := "MKT SELL (" + strength + ")"
+else if sellTrig
+    sigText := "MKT SELL [" + activeStrat + "] Q:" + str.tostring(qualSell, "#") + " R:" + str.tostring(rrSell, "#.#")
     sigCol  := color.new(#FF1744, 0)
 else if pendBuyMo
     sigText := "PEND BUY @ " + str.tostring(moVAL, format.mintick)
@@ -357,27 +559,26 @@ else if pendSellWk
 //  PLOTS
 // ══════════════════════════════════════════════════════════
 
-// VP levels — weekly (thin, semi-transparent) & monthly (thick, solid)
+// VP levels
 plot(showWk ? wkPOC : na, "Wk POC", color.new(#FF9800, 30), 1, plot.style_stepline)
 plot(showWk ? wkVAH : na, "Wk VAH", color.new(#EF5350, 30), 1, plot.style_stepline)
 plot(showWk ? wkVAL : na, "Wk VAL", color.new(#26A69A, 30), 1, plot.style_stepline)
-
 plot(showMo ? moPOC : na, "Mo POC", color.new(#FF9800, 0), 2, plot.style_stepline)
 plot(showMo ? moVAH : na, "Mo VAH", color.new(#EF5350, 0), 2, plot.style_stepline)
 plot(showMo ? moVAL : na, "Mo VAL", color.new(#26A69A, 0), 2, plot.style_stepline)
 
-// Market-order signals
-plotshape(buyTrig,  "Market Buy",  shape.labelup,   location.belowbar, color.new(#00E676, 0), text="MKT\nBUY",  textcolor=color.white, size=size.normal)
-plotshape(sellTrig, "Market Sell", shape.labeldown,  location.abovebar, color.new(#FF1744, 0), text="MKT\nSELL", textcolor=color.white, size=size.normal)
+// Market signals with strategy label
+plotshape(buyTrig,  "Market Buy",  shape.labelup,   location.belowbar, color.new(#00E676, 0), text="BUY",  textcolor=color.white, size=size.normal)
+plotshape(sellTrig, "Market Sell", shape.labeldown,  location.abovebar, color.new(#FF1744, 0), text="SELL", textcolor=color.white, size=size.normal)
 
-// Suggested exit markers
-plotshape(buyExitNow,  "Buy Exit",  shape.xcross, location.abovebar, color.new(#00E676, 50), text="EXIT", textcolor=color.new(#00E676, 50), size=size.tiny)
-plotshape(sellExitNow, "Sell Exit", shape.xcross, location.belowbar, color.new(#FF1744, 50), text="EXIT", textcolor=color.new(#FF1744, 50), size=size.tiny)
+// Active stop/target lines
+plot(showSL and not na(activeSL) ? activeSL : na, "Active SL", color.new(#FF1744, 40), 1, plot.style_linebr)
+plot(showSL and not na(activeTP) ? activeTP : na, "Active TP", color.new(#00E676, 40), 1, plot.style_linebr)
 
-// Trend background tint
-bgcolor(showBg and score > 0.5 ? color.new(#00E676, 92) : showBg and score < -0.5 ? color.new(#FF1744, 92) : na, title="Trend Tint")
+// Regime background
+bgcolor(showBg ? (regime == "BULL" ? color.new(#00E676, 94) : regime == "BEAR" ? color.new(#FF1744, 94) : regime == "RANGE" ? color.new(#2979FF, 96) : na) : na, title="Regime Tint")
 
-// ── Pending-order labels on the last bar ──
+// ── Pending labels ──
 var label lPBw = na
 var label lPBm = na
 var label lPSw = na
@@ -404,7 +605,7 @@ if barstate.islast and showPnd
 
 tablePosition = tblPos == "Top Left" ? position.top_left : tblPos == "Bottom Right" ? position.bottom_right : tblPos == "Bottom Left" ? position.bottom_left : position.top_right
 
-var table tbl = showTbl ? table.new(tablePosition, 4, 15, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
+var table tbl = showTbl ? table.new(tablePosition, 5, 18, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
 
 if showTbl and barstate.islast and not na(tbl)
     hBg = color.new(#161b22, 0)
@@ -413,33 +614,61 @@ if showTbl and barstate.islast and not na(tbl)
     mFg = color.new(#8b949e, 0)
 
     // Row 0 — header
-    table.cell(tbl, 0, 0, "F98 V11", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 0, "ORDER", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 0, "INDICATOR", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 0, "", text_color=hFg, text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 0, 0, "F98", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 0, "BLUEPRINT", text_color=color.new(#FFC107, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 2, 0, stratMode == "AUTO" ? regime : stratMode, text_color=regimeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 3, 0, "", text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 4, 0, "", text_size=size.small, bgcolor=hBg)
 
-    // Row 1 — Oscillators
-    table.cell(tbl, 0, 1, "Oscillators", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 1, oscR, text_color=ratingCol(oscR), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 1, str.tostring(oscBuy) + "B", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 1, str.tostring(oscNeut) + "N " + str.tostring(oscSell) + "S", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    // Row 1 — Regime
+    table.cell(tbl, 0, 1, "Regime", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 1, regime, text_color=regimeCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 1, "Bull:" + str.tostring(bullScore, "#"), text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 1, "ADX:" + str.tostring(adxV, "#"), text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 4, 1, "", text_size=size.small)
 
-    // Row 2 — Moving Averages
-    table.cell(tbl, 0, 2, "Moving Avg", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 2, maR, text_color=ratingCol(maR), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 2, str.tostring(maBuy) + "B", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 2, str.tostring(maNeut) + "N " + str.tostring(maSell) + "S", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    // Row 2 — Oscillators
+    table.cell(tbl, 0, 2, "Oscillators", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 2, oscR, text_color=ratingCol(oscR), text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 2, str.tostring(oscBuy) + "B " + str.tostring(oscNeut) + "N " + str.tostring(oscSell) + "S", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 2, "", text_size=size.small)
+    table.cell(tbl, 4, 2, "", text_size=size.small)
 
-    // Row 3 — Summary
-    table.cell(tbl, 0, 3, "SUMMARY", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 3, totR, text_color=ratingCol(totR), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 3, str.tostring(score, "#.##"), text_color=ratingCol(totR), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 3, "", text_size=size.small, bgcolor=hBg)
+    // Row 3 — Moving Averages
+    table.cell(tbl, 0, 3, "Moving Avg", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 3, maR, text_color=ratingCol(maR), text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 3, str.tostring(maBuy) + "B " + str.tostring(maNeut) + "N " + str.tostring(maSell) + "S", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 3, "", text_size=size.small)
+    table.cell(tbl, 4, 3, "", text_size=size.small)
 
-    // Row 4 — V11 Entry Conditions
-    table.cell(tbl, 0, 4, "V11 Check", text_color=color.new(#FFC107, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    // Row 4 — Summary
+    table.cell(tbl, 0, 4, "SUMMARY", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 4, totR, text_color=ratingCol(totR), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 2, 4, str.tostring(score, "#.##"), text_color=ratingCol(totR), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 3, 4, "", text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 4, 4, "", text_size=size.small, bgcolor=hBg)
+
+    // Row 5 — Quality Score
+    float activeQual = buyTrig ? qualBuy : sellTrig ? qualSell : math.max(qualityCalc("BUY", regime, nearestSup), qualityCalc("SELL", regime, nearestRes))
+    color qCol = activeQual >= 70 ? color.new(#00E676, 0) : activeQual >= 55 ? color.new(#26A69A, 0) : activeQual >= 40 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(tbl, 0, 5, "Quality", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 5, str.tostring(activeQual, "#") + "/100", text_color=qCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 5, "Min:" + str.tostring(minQuality), text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 5, activeQual >= minQuality ? "PASS" : "FAIL", text_color=activeQual >= minQuality ? color.new(#00E676, 0) : color.new(#FF1744, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 4, 5, "", text_size=size.small)
+
+    // Row 6 — R:R
+    float activeRR = buyTrig or nearSup ? rrBuy : sellTrig or nearRes ? rrSell : 0.0
+    color rrCol = activeRR >= 2.0 ? color.new(#00E676, 0) : activeRR >= 1.5 ? color.new(#26A69A, 0) : activeRR >= 1.0 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(tbl, 0, 6, "R:R", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 6, str.tostring(activeRR, "#.#") + "R", text_color=rrCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 6, "Min:" + str.tostring(rrMin, "#.#"), text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 6, activeRR >= rrMin ? "PASS" : "FAIL", text_color=activeRR >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 4, 6, "", text_size=size.small)
+
+    // Row 7 — V11 Conditions
+    table.cell(tbl, 0, 7, "V11 Check", text_color=color.new(#FFC107, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
     string v11Status = ""
-    color v11Col = mFg
     if oscOversold
         v11Status += "OS "
     if oscOverbought
@@ -454,78 +683,82 @@ if showTbl and barstate.islast and not na(tbl)
         v11Status += "M- "
     if v11Status == ""
         v11Status := "---"
-    if mktBuy or mktSell
-        v11Col := mktBuy ? color.new(#00E676, 0) : color.new(#FF1744, 0)
-    table.cell(tbl, 1, 4, v11Status, text_color=v11Col, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 4, "RSI:" + str.tostring(rsiV, "#") + " K:" + str.tostring(rawK, "#"), text_color=mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 4, "WR:" + str.tostring(wrV, "#"), text_color=mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 7, v11Status, text_color=v11_buy or v11_sell ? (v11_buy ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 2, 7, "RSI:" + str.tostring(rsiV, "#") + " K:" + str.tostring(rawK, "#"), text_color=mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 3, 7, "WR:" + str.tostring(wrV, "#"), text_color=mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 4, 7, "", text_size=size.small, bgcolor=hBg)
 
-    // Row 5 — spacer
-    for c = 0 to 3
-        table.cell(tbl, c, 5, "", text_size=size.tiny)
-
-    // Rows 6-8 — Weekly VP
-    table.cell(tbl, 0, 6, "Wk VAH", text_color=color.new(#EF5350, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 6, not na(wkVAH) ? str.tostring(wkVAH, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 6, pendSellWk ? "PEND SELL" : nearWkVAH ? "AT LEVEL" : "", text_color=pendSellWk ? color.new(#AA00FF, 0) : color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 6, "", text_size=size.small)
-
-    table.cell(tbl, 0, 7, "Wk POC", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 7, not na(wkPOC) ? str.tostring(wkPOC, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 7, "", text_size=size.small)
-    table.cell(tbl, 3, 7, "", text_size=size.small)
-
-    table.cell(tbl, 0, 8, "Wk VAL", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 8, not na(wkVAL) ? str.tostring(wkVAL, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 8, pendBuyWk ? "PEND BUY" : nearWkVAL ? "AT LEVEL" : "", text_color=pendBuyWk ? color.new(#2979FF, 0) : color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_center)
+    // Row 8 — Vetoes
+    string vetoText = vetoTransition ? "TRANSITION" : vetoATR ? "ATR" : vetoCounterRegime ? "COUNTER_REGIME" : "NONE"
+    table.cell(tbl, 0, 8, "Vetoes", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 8, vetoText, text_color=vetoed ? color.new(#FF1744, 0) : color.new(#00E676, 0), text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 8, "", text_size=size.small)
     table.cell(tbl, 3, 8, "", text_size=size.small)
+    table.cell(tbl, 4, 8, "", text_size=size.small)
 
-    // Rows 9-11 — Monthly VP
-    table.cell(tbl, 0, 9, "Mo VAH", text_color=color.new(#EF5350, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 9, not na(moVAH) ? str.tostring(moVAH, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 9, pendSellMo ? "PEND SELL" : nearMoVAH ? "AT LEVEL" : "", text_color=pendSellMo ? color.new(#AA00FF, 0) : color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 9, "", text_size=size.small)
+    // Row 9 — spacer
+    for c = 0 to 4
+        table.cell(tbl, c, 9, "", text_size=size.tiny)
 
-    table.cell(tbl, 0, 10, "Mo POC", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 10, not na(moPOC) ? str.tostring(moPOC, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 10, "", text_size=size.small)
-    table.cell(tbl, 3, 10, "", text_size=size.small)
+    // Rows 10-12 — Weekly VP
+    table.cell(tbl, 0, 10, "Wk VAH", text_color=color.new(#EF5350, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 10, not na(wkVAH) ? str.tostring(wkVAH, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 10, str.tostring(distWkVAH, "#.#") + " ATR", text_color=nearWkVAH ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 10, nearWkVAH ? "NEAR" : "", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 4, 10, "", text_size=size.small)
 
-    table.cell(tbl, 0, 11, "Mo VAL", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 11, not na(moVAL) ? str.tostring(moVAL, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 11, pendBuyMo ? "PEND BUY" : nearMoVAL ? "AT LEVEL" : "", text_color=pendBuyMo ? color.new(#2979FF, 0) : color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 0, 11, "Wk POC", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 11, not na(wkPOC) ? str.tostring(wkPOC, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 11, str.tostring(distWkPOC, "#.#") + " ATR", text_color=nearWkPOC ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 3, 11, "", text_size=size.small)
+    table.cell(tbl, 4, 11, "", text_size=size.small)
 
-    // Row 12 — spacer
-    for c = 0 to 3
-        table.cell(tbl, c, 12, "", text_size=size.tiny)
+    table.cell(tbl, 0, 12, "Wk VAL", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 12, not na(wkVAL) ? str.tostring(wkVAL, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 12, str.tostring(distWkVAL, "#.#") + " ATR", text_color=nearWkVAL ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 12, nearWkVAL ? "NEAR" : "", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 4, 12, "", text_size=size.small)
 
-    // Row 13 — active signal
-    table.cell(tbl, 0, 13, "SIGNAL", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 13, sigText, text_color=sigCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 13, "", text_size=size.small, bgcolor=hBg)
-    table.cell(tbl, 3, 13, "", text_size=size.small, bgcolor=hBg)
+    // Rows 13-15 — Monthly VP
+    table.cell(tbl, 0, 13, "Mo VAH", text_color=color.new(#EF5350, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 13, not na(moVAH) ? str.tostring(moVAH, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 13, str.tostring(distMoVAH, "#.#") + " ATR", text_color=nearMoVAH ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 13, nearMoVAH ? "NEAR" : "", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 4, 13, "", text_size=size.small)
 
-    // Row 14 — hold info
-    string holdInfo = ""
-    if not na(buyExitBar) and buyExitBar > bar_index
-        holdInfo := "BUY exit in " + str.tostring(buyExitBar - bar_index) + " bars"
-    if not na(sellExitBar) and sellExitBar > bar_index
-        holdInfo := "SELL exit in " + str.tostring(sellExitBar - bar_index) + " bars"
-    table.cell(tbl, 0, 14, "HOLD", text_color=mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 14, holdInfo != "" ? holdInfo : "---", text_color=holdInfo != "" ? color.new(#FFC107, 0) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 14, "", text_size=size.small, bgcolor=hBg)
-    table.cell(tbl, 3, 14, "", text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 0, 14, "Mo POC", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 14, not na(moPOC) ? str.tostring(moPOC, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 14, str.tostring(distMoPOC, "#.#") + " ATR", text_color=nearMoPOC ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 14, "", text_size=size.small)
+    table.cell(tbl, 4, 14, "", text_size=size.small)
+
+    table.cell(tbl, 0, 15, "Mo VAL", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 15, not na(moVAL) ? str.tostring(moVAL, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 15, str.tostring(distMoVAL, "#.#") + " ATR", text_color=nearMoVAL ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 15, nearMoVAL ? "NEAR" : "", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 4, 15, "", text_size=size.small)
+
+    // Row 16 — spacer
+    for c = 0 to 4
+        table.cell(tbl, c, 16, "", text_size=size.tiny)
+
+    // Row 17 — Signal + Stop/Target
+    table.cell(tbl, 0, 17, "SIGNAL", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 17, sigText, text_color=sigCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    string sltp = not na(activeSL) ? "SL:" + str.tostring(activeSL, format.mintick) + " TP:" + str.tostring(activeTP, format.mintick) : "---"
+    table.cell(tbl, 2, 17, sltp, text_color=not na(activeSL) ? color.new(#FFC107, 0) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 3, 17, "", text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 4, 17, "", text_size=size.small, bgcolor=hBg)
 
 // ══════════════════════════════════════════════════════════
 //  ALERTS
 // ══════════════════════════════════════════════════════════
 
-alertcondition(buyTrig,  "Market Buy",  "V11 MARKET BUY at {{close}} — Osc extreme + VP support + momentum confirm")
-alertcondition(sellTrig, "Market Sell", "V11 MARKET SELL at {{close}} — Osc extreme + VP resistance + momentum confirm")
+alertcondition(buyTrig,  "Market Buy",  "BLUEPRINT BUY at {{close}} — Regime: " + regime + " | Quality passed | R:R passed")
+alertcondition(sellTrig, "Market Sell", "BLUEPRINT SELL at {{close}} — Regime: " + regime + " | Quality passed | R:R passed")
 alertcondition(pendBuyWk  and not nz(pendBuyWk[1]),  "Pending Buy (Wk)",  "Pending BUY zone — Weekly VAL {{close}}")
 alertcondition(pendSellWk and not nz(pendSellWk[1]), "Pending Sell (Wk)", "Pending SELL zone — Weekly VAH {{close}}")
 alertcondition(pendBuyMo  and not nz(pendBuyMo[1]),  "Pending Buy (Mo)",  "Pending BUY zone — Monthly VAL {{close}}")
 alertcondition(pendSellMo and not nz(pendSellMo[1]), "Pending Sell (Mo)", "Pending SELL zone — Monthly VAH {{close}}")
-alertcondition(buyExitNow,  "Buy Exit Suggestion",  "Suggested BUY exit — hold period complete")
-alertcondition(sellExitNow, "Sell Exit Suggestion", "Suggested SELL exit — hold period complete")
+alertcondition(regime != nz(regime[1]) and regime == "TRANSITION", "Regime Transition", "VETO: Market entered TRANSITION regime — no new entries")
+alertcondition(not na(activeSL) and ((activeIsBuy and low <= activeSL) or (not activeIsBuy and high >= activeSL)), "Stop Hit", "Stop loss hit — exit position")
