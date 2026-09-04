@@ -80,59 +80,39 @@ vpCalc(float[] bins, float hi, float lo, float totV, int rows, float vaPct) =>
         _val := lo + aL * bs
     [_poc, _vah, _val]
 
-// ── Weekly VP ──
+// ── Weekly VP (Rolling 30-bar lookback — zoom-stable) ──
 var float[] wkBins = array.new_float(vpRows, 0.0)
-var float   wkHi   = na
-var float   wkLo   = na
-var float   wkVol  = 0.0
+float wkRollHi = ta.highest(high, 30)
+float wkRollLo = ta.lowest(low, 30)
+float wkVol    = 0.0
 
-if ta.change(time("W"))
-    array.fill(wkBins, 0.0)
-    wkHi  := high
-    wkLo  := low
-    wkVol := 0.0
-if na(wkHi)
-    wkHi := high
-    wkLo := low
+array.fill(wkBins, 0.0)
+if wkRollHi > wkRollLo and bar_index >= 29
+    float bs = (wkRollHi - wkRollLo) / vpRows
+    for i = 0 to 29
+        int ix = math.min(int(math.floor((hlc3[i] - wkRollLo) / bs)), vpRows - 1)
+        if ix >= 0 and ix < vpRows
+            array.set(wkBins, ix, array.get(wkBins, ix) + volume[i])
+        wkVol += volume[i]
 
-wkHi := math.max(wkHi, high)
-wkLo := math.min(wkLo, low)
+[wkPOC, wkVAH, wkVAL] = vpCalc(wkBins, wkRollHi, wkRollLo, wkVol, vpRows, vpVA)
 
-if wkHi > wkLo
-    float bs = (wkHi - wkLo) / vpRows
-    int   ix = math.min(int(math.floor((hlc3 - wkLo) / bs)), vpRows - 1)
-    if ix >= 0 and ix < vpRows
-        array.set(wkBins, ix, array.get(wkBins, ix) + volume)
-    wkVol += volume
-
-[wkPOC, wkVAH, wkVAL] = vpCalc(wkBins, wkHi, wkLo, wkVol, vpRows, vpVA)
-
-// ── Monthly VP ──
+// ── Monthly VP (Rolling 120-bar lookback — zoom-stable) ──
 var float[] moBins = array.new_float(vpRows, 0.0)
-var float   moHi   = na
-var float   moLo   = na
-var float   moVol  = 0.0
+float moRollHi = ta.highest(high, 120)
+float moRollLo = ta.lowest(low, 120)
+float moVol    = 0.0
 
-if ta.change(time("M"))
-    array.fill(moBins, 0.0)
-    moHi  := high
-    moLo  := low
-    moVol := 0.0
-if na(moHi)
-    moHi := high
-    moLo := low
+array.fill(moBins, 0.0)
+if moRollHi > moRollLo and bar_index >= 119
+    float bs = (moRollHi - moRollLo) / vpRows
+    for i = 0 to 119
+        int ix = math.min(int(math.floor((hlc3[i] - moRollLo) / bs)), vpRows - 1)
+        if ix >= 0 and ix < vpRows
+            array.set(moBins, ix, array.get(moBins, ix) + volume[i])
+        moVol += volume[i]
 
-moHi := math.max(moHi, high)
-moLo := math.min(moLo, low)
-
-if moHi > moLo
-    float bs = (moHi - moLo) / vpRows
-    int   ix = math.min(int(math.floor((hlc3 - moLo) / bs)), vpRows - 1)
-    if ix >= 0 and ix < vpRows
-        array.set(moBins, ix, array.get(moBins, ix) + volume)
-    moVol += volume
-
-[moPOC, moVAH, moVAL] = vpCalc(moBins, moHi, moLo, moVol, vpRows, vpVA)
+[moPOC, moVAH, moVAL] = vpCalc(moBins, moRollHi, moRollLo, moVol, vpRows, vpVA)
 
 // ══════════════════════════════════════════════════════════
 //  INDICATORS
@@ -496,18 +476,21 @@ var float activeSL     = na
 var float activeTP     = na
 var bool  activeIsBuy  = false
 var int   activeEntry  = na
+var float activeEntryPrice = na
 
 if buyTrig
     activeSL    := buySL
     activeTP    := buyTarget
     activeIsBuy := true
     activeEntry := bar_index
+    activeEntryPrice := close
 
 if sellTrig
     activeSL    := sellSL
     activeTP    := sellTarget
     activeIsBuy := false
     activeEntry := bar_index
+    activeEntryPrice := close
 
 // Exit tracking
 bool timeExit = false
@@ -523,11 +506,13 @@ if not na(activeEntry)
             activeSL    := na
             activeTP    := na
             activeEntry := na
+            activeEntryPrice := na
     else
         if high >= activeSL or low <= activeTP or timeExit
             activeSL    := na
             activeTP    := na
             activeEntry := na
+            activeEntryPrice := na
 
     // Trailing stop update
     if (exitMode == "Struct_Trail" or exitMode == "Struct_Trail_BE") and not na(activeSL)
@@ -578,6 +563,67 @@ else if pendSellWk
     sigText := "PEND SELL @ " + str.tostring(wkVAH, format.mintick)
     sigCol  := color.new(#AA00FF, 0)
 
+// ── Order details for dashboard ──
+bool hasPending = pendBuyWk or pendBuyMo or pendSellWk or pendSellMo
+bool hasMarket = buyTrig or sellTrig
+bool hasActiveTrade = not na(activeSL)
+
+float dispEntry = na
+float dispSL    = na
+float dispTP    = na
+float dispRR    = na
+string dispDir  = "—"
+string dispType = "WAIT"
+
+if hasMarket
+    dispType := "MARKET"
+    dispEntry := close
+    if buyTrig
+        dispSL  := buySL
+        dispTP  := buyTarget
+        dispRR  := rrBuy
+        dispDir := "BUY"
+    else
+        dispSL  := sellSL
+        dispTP  := sellTarget
+        dispRR  := rrSell
+        dispDir := "SELL"
+else if hasPending
+    dispType := "PENDING"
+    bool pendIsBuy = pendBuyWk or pendBuyMo
+    if pendBuyMo
+        dispEntry := moVAL
+    else if pendBuyWk
+        dispEntry := wkVAL
+    else if pendSellMo
+        dispEntry := moVAH
+    else if pendSellWk
+        dispEntry := wkVAH
+    dispDir := pendIsBuy ? "BUY" : "SELL"
+    if not na(dispEntry) and atrV > 0
+        if pendIsBuy
+            float pSD = math.max(atrV * minStopATR, dispEntry - swingLow10 + atrV * atrBuf)
+            dispSL := dispEntry - pSD
+            dispTP := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : dispEntry + pSD * rrMin
+            dispRR := pSD > 0 ? (dispTP - dispEntry) / pSD : 0.0
+        else
+            float pSD = math.max(atrV * minStopATR, swingHigh10 + atrV * atrBuf - dispEntry)
+            dispSL := dispEntry + pSD
+            dispTP := not na(wkVAL) ? wkVAL : not na(moVAL) ? moVAL : dispEntry - pSD * rrMin
+            dispRR := pSD > 0 ? (dispEntry - dispTP) / pSD : 0.0
+else if hasActiveTrade
+    dispType := "ACTIVE"
+    dispEntry := activeEntryPrice
+    dispSL := activeSL
+    dispTP := activeTP
+    dispDir := activeIsBuy ? "BUY" : "SELL"
+    if not na(dispEntry) and not na(dispSL)
+        float sDist = math.abs(dispEntry - dispSL)
+        float tDist = not na(dispTP) ? math.abs(dispTP - dispEntry) : 0.0
+        dispRR := sDist > 0 ? tDist / sDist : 0.0
+
+color dispTypeCol = dispType == "MARKET" ? color.new(#00E676, 0) : dispType == "PENDING" ? color.new(#2979FF, 0) : dispType == "ACTIVE" ? color.new(#FFC107, 0) : color.gray
+
 // ══════════════════════════════════════════════════════════
 //  PLOTS
 // ══════════════════════════════════════════════════════════
@@ -590,9 +636,11 @@ plot(showMo ? moPOC : na, "Mo POC", color.new(#FF9800, 0), 2, plot.style_steplin
 plot(showMo ? moVAH : na, "Mo VAH", color.new(#EF5350, 0), 2, plot.style_stepline)
 plot(showMo ? moVAL : na, "Mo VAL", color.new(#26A69A, 0), 2, plot.style_stepline)
 
-// Market signals with strategy label
-plotshape(buyTrig,  "Market Buy",  shape.labelup,   location.belowbar, color.new(#00E676, 0), text="BUY",  textcolor=color.white, size=size.normal)
-plotshape(sellTrig, "Market Sell", shape.labeldown,  location.abovebar, color.new(#FF1744, 0), text="SELL", textcolor=color.white, size=size.normal)
+// Market signals with entry price label
+if buyTrig
+    label.new(bar_index, low, "BUY\n" + str.tostring(close, format.mintick), xloc.bar_index, yloc.price, color.new(#00E676, 0), label.style_label_up, color.white, size.normal)
+if sellTrig
+    label.new(bar_index, high, "SELL\n" + str.tostring(close, format.mintick), xloc.bar_index, yloc.price, color.new(#FF1744, 0), label.style_label_down, color.white, size.normal)
 
 // Active stop/target lines
 plot(showSL and not na(activeSL) ? activeSL : na, "Active SL", color.new(#FF1744, 40), 1, plot.style_linebr)
@@ -628,7 +676,7 @@ if barstate.islast and showPnd
 
 tablePosition = tblPos == "Top Left" ? position.top_left : tblPos == "Bottom Right" ? position.bottom_right : tblPos == "Bottom Left" ? position.bottom_left : position.top_right
 
-var table tbl = showTbl ? table.new(tablePosition, 5, 18, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
+var table tbl = showTbl ? table.new(tablePosition, 5, 23, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
 
 if showTbl and barstate.islast and not na(tbl)
     hBg = color.new(#161b22, 0)
@@ -765,13 +813,50 @@ if showTbl and barstate.islast and not na(tbl)
     for c = 0 to 4
         table.cell(tbl, c, 16, "", text_size=size.tiny)
 
-    // Row 17 — Signal + Stop/Target
-    table.cell(tbl, 0, 17, "SIGNAL", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 17, sigText, text_color=sigCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    string sltp = not na(activeSL) ? "SL:" + str.tostring(activeSL, format.mintick) + " TP:" + str.tostring(activeTP, format.mintick) : "---"
-    table.cell(tbl, 2, 17, sltp, text_color=not na(activeSL) ? color.new(#FFC107, 0) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 17, "", text_size=size.small, bgcolor=hBg)
+    // Row 17 — Order Section Header
+    table.cell(tbl, 0, 17, "ORDER", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 17, dispType, text_color=dispTypeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 2, 17, dispDir, text_color=dispDir == "BUY" ? color.new(#00E676, 0) : dispDir == "SELL" ? color.new(#FF1744, 0) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 3, 17, strength, text_color=strength == "STRONG" ? color.new(#FFC107, 0) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 4, 17, "", text_size=size.small, bgcolor=hBg)
+
+    // Row 18 — Pending Order
+    bool pendYes = dispType == "PENDING"
+    table.cell(tbl, 0, 18, "Pending", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 18, pendYes ? "YES" : "NO", text_color=pendYes ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 18, pendYes and not na(dispEntry) ? "@ " + str.tostring(dispEntry, format.mintick) : "—", text_color=pendYes ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 18, "", text_size=size.small)
+    table.cell(tbl, 4, 18, "", text_size=size.small)
+
+    // Row 19 — Market Order
+    bool mktYes = dispType == "MARKET" or dispType == "ACTIVE"
+    table.cell(tbl, 0, 19, "Market", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 19, mktYes ? "YES" : "NO", text_color=mktYes ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 19, mktYes and not na(dispEntry) ? "@ " + str.tostring(dispEntry, format.mintick) : "—", text_color=mktYes ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 19, "", text_size=size.small)
+    table.cell(tbl, 4, 19, "", text_size=size.small)
+
+    // Row 20 — Stop Loss
+    table.cell(tbl, 0, 20, "Stop Loss", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 20, not na(dispSL) ? str.tostring(dispSL, format.mintick) : "—", text_color=not na(dispSL) ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 20, "", text_size=size.small)
+    table.cell(tbl, 3, 20, "", text_size=size.small)
+    table.cell(tbl, 4, 20, "", text_size=size.small)
+
+    // Row 21 — Take Profit
+    table.cell(tbl, 0, 21, "Take Profit", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 21, not na(dispTP) ? str.tostring(dispTP, format.mintick) : "—", text_color=not na(dispTP) ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 21, "", text_size=size.small)
+    table.cell(tbl, 3, 21, "", text_size=size.small)
+    table.cell(tbl, 4, 21, "", text_size=size.small)
+
+    // Row 22 — Expected R:R
+    color dispRRCol = not na(dispRR) and dispRR >= 2.5 ? color.new(#00E676, 0) : not na(dispRR) and dispRR >= 2.0 ? color.new(#26A69A, 0) : not na(dispRR) and dispRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(tbl, 0, 22, "Exp. R:R", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 22, not na(dispRR) ? str.tostring(dispRR, "#.#") + "R" : "—", text_color=not na(dispRR) ? dispRRCol : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 22, not na(dispRR) ? (dispRR >= rrMin ? "PASS" : "FAIL") : "", text_color=not na(dispRR) ? (dispRR >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 22, "", text_size=size.small)
+    table.cell(tbl, 4, 22, "", text_size=size.small)
 
 // ══════════════════════════════════════════════════════════
 //  ALERTS
