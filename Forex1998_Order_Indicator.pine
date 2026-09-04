@@ -40,6 +40,7 @@ tblPos  = input.string("Top Right", "Dashboard Position", options=["Top Right", 
 showBg  = input.bool(true, "Regime Background Tint", group=g3)
 showPnd = input.bool(true, "Pending-Order Labels", group=g3)
 showSL  = input.bool(true, "Show Stop/Target Lines", group=g3)
+showUnt = input.bool(true, "Show Untested Levels", group=g3)
 
 // ══════════════════════════════════════════════════════════
 //  VOLUME PROFILE — core calculation
@@ -80,39 +81,105 @@ vpCalc(float[] bins, float hi, float lo, float totV, int rows, float vaPct) =>
         _val := lo + aL * bs
     [_poc, _vah, _val]
 
-// ── Weekly VP (Rolling 30-bar lookback — zoom-stable) ──
+// ── Calendar-Aligned Weekly VP ──
 var float[] wkBins = array.new_float(vpRows, 0.0)
-float wkRollHi = ta.highest(high, 30)
-float wkRollLo = ta.lowest(low, 30)
-float wkVol    = 0.0
+var int   wkStartBar = -1
+var bool  wkReady = false
 
-array.fill(wkBins, 0.0)
-if wkRollHi > wkRollLo and bar_index >= 29
-    float bs = (wkRollHi - wkRollLo) / vpRows
-    for i = 0 to 29
-        int ix = math.min(int(math.floor((hlc3[i] - wkRollLo) / bs)), vpRows - 1)
-        if ix >= 0 and ix < vpRows
-            array.set(wkBins, ix, array.get(wkBins, ix) + volume[i])
-        wkVol += volume[i]
+if ta.change(time("W"))
+    wkStartBar := bar_index
+    wkReady := true
 
-[wkPOC, wkVAH, wkVAL] = vpCalc(wkBins, wkRollHi, wkRollLo, wkVol, vpRows, vpVA)
+float wkPOC = na
+float wkVAH = na
+float wkVAL = na
 
-// ── Monthly VP (Rolling 120-bar lookback — zoom-stable) ──
+if wkReady
+    int wkLen = bar_index - wkStartBar
+    array.fill(wkBins, 0.0)
+    float _whi = high
+    float _wlo = low
+    for i = 0 to math.min(wkLen, 500)
+        _whi := math.max(_whi, high[i])
+        _wlo := math.min(_wlo, low[i])
+    float _wvol = 0.0
+    if _whi > _wlo
+        float bs = (_whi - _wlo) / vpRows
+        for i = 0 to math.min(wkLen, 500)
+            int ix = math.min(int(math.floor((hlc3[i] - _wlo) / bs)), vpRows - 1)
+            if ix >= 0 and ix < vpRows
+                array.set(wkBins, ix, array.get(wkBins, ix) + volume[i])
+            _wvol += volume[i]
+    [_wp, _wh, _wl] = vpCalc(wkBins, _whi, _wlo, _wvol, vpRows, vpVA)
+    wkPOC := _wp
+    wkVAH := _wh
+    wkVAL := _wl
+
+// ── Calendar-Aligned Monthly VP + Untested Level Tracking ──
 var float[] moBins = array.new_float(vpRows, 0.0)
-float moRollHi = ta.highest(high, 120)
-float moRollLo = ta.lowest(low, 120)
-float moVol    = 0.0
+var int   moStartBar = -1
+var bool  moReady = false
+var float moPOCsave = na
+var float moVAHsave = na
+var float moVALsave = na
 
-array.fill(moBins, 0.0)
-if moRollHi > moRollLo and bar_index >= 119
-    float bs = (moRollHi - moRollLo) / vpRows
-    for i = 0 to 119
-        int ix = math.min(int(math.floor((hlc3[i] - moRollLo) / bs)), vpRows - 1)
-        if ix >= 0 and ix < vpRows
-            array.set(moBins, ix, array.get(moBins, ix) + volume[i])
-        moVol += volume[i]
+var float[] untVAH = array.new_float(0)
+var float[] untVAL = array.new_float(0)
+var float[] untPOC = array.new_float(0)
 
-[moPOC, moVAH, moVAL] = vpCalc(moBins, moRollHi, moRollLo, moVol, vpRows, vpVA)
+if ta.change(time("M"))
+    if moReady and not na(moPOCsave)
+        array.push(untVAH, moVAHsave)
+        array.push(untVAL, moVALsave)
+        array.push(untPOC, moPOCsave)
+        if array.size(untVAH) > 12
+            array.shift(untVAH)
+            array.shift(untVAL)
+            array.shift(untPOC)
+    moStartBar := bar_index
+    moReady := true
+
+float moPOC = na
+float moVAH = na
+float moVAL = na
+
+if moReady
+    int moLen = bar_index - moStartBar
+    array.fill(moBins, 0.0)
+    float _mhi = high
+    float _mlo = low
+    for i = 0 to math.min(moLen, 2000)
+        _mhi := math.max(_mhi, high[i])
+        _mlo := math.min(_mlo, low[i])
+    float _mvol = 0.0
+    if _mhi > _mlo
+        float bs = (_mhi - _mlo) / vpRows
+        for i = 0 to math.min(moLen, 2000)
+            int ix = math.min(int(math.floor((hlc3[i] - _mlo) / bs)), vpRows - 1)
+            if ix >= 0 and ix < vpRows
+                array.set(moBins, ix, array.get(moBins, ix) + volume[i])
+            _mvol += volume[i]
+    [_mp, _mh, _ml] = vpCalc(moBins, _mhi, _mlo, _mvol, vpRows, vpVA)
+    moPOC := _mp
+    moVAH := _mh
+    moVAL := _ml
+    moPOCsave := _mp
+    moVAHsave := _mh
+    moVALsave := _ml
+
+// Remove tested untested levels
+if array.size(untVAH) > 0
+    for i = array.size(untVAH) - 1 to 0
+        if low <= array.get(untVAH, i) and high >= array.get(untVAH, i)
+            array.remove(untVAH, i)
+if array.size(untVAL) > 0
+    for i = array.size(untVAL) - 1 to 0
+        if low <= array.get(untVAL, i) and high >= array.get(untVAL, i)
+            array.remove(untVAL, i)
+if array.size(untPOC) > 0
+    for i = array.size(untPOC) - 1 to 0
+        if low <= array.get(untPOC, i) and high >= array.get(untPOC, i)
+            array.remove(untPOC, i)
 
 // ══════════════════════════════════════════════════════════
 //  INDICATORS
@@ -294,12 +361,35 @@ bool nearMoVAL = distMoVAL <= proxATR
 bool nearMoVAH = distMoVAH <= proxATR
 bool nearMoPOC = distMoPOC <= proxATR
 
-bool nearSup = nearWkVAL or nearMoVAL
-bool nearRes = nearWkVAH or nearMoVAH
+// Nearest untested level distance
+float distUntSup = 999.0
+float distUntRes = 999.0
+float nearUntSupPrice = na
+float nearUntResPrice = na
+
+if atrV > 0 and array.size(untVAL) > 0
+    for i = 0 to array.size(untVAL) - 1
+        float d = math.abs(close - array.get(untVAL, i)) / atrV
+        if d < distUntSup
+            distUntSup := d
+            nearUntSupPrice := array.get(untVAL, i)
+
+if atrV > 0 and array.size(untVAH) > 0
+    for i = 0 to array.size(untVAH) - 1
+        float d = math.abs(close - array.get(untVAH, i)) / atrV
+        if d < distUntRes
+            distUntRes := d
+            nearUntResPrice := array.get(untVAH, i)
+
+bool nearUntSup = distUntSup <= proxATR
+bool nearUntRes = distUntRes <= proxATR
+
+bool nearSup = nearWkVAL or nearMoVAL or nearUntSup
+bool nearRes = nearWkVAH or nearMoVAH or nearUntRes
 bool nearPOC = nearWkPOC or nearMoPOC
 
-float nearestSup = math.min(distWkVAL, distMoVAL)
-float nearestRes = math.min(distWkVAH, distMoVAH)
+float nearestSup = math.min(math.min(distWkVAL, distMoVAL), distUntSup)
+float nearestRes = math.min(math.min(distWkVAH, distMoVAH), distUntRes)
 float nearestVP  = math.min(math.min(distWkVAL, distWkVAH), math.min(distMoVAL, distMoVAH))
 
 // ══════════════════════════════════════════════════════════
@@ -670,13 +760,42 @@ if barstate.islast and showPnd
     if pendSellMo
         lPSm := label.new(bar_index + 8, moVAH, "PEND SELL (Mo)\n" + str.tostring(moVAH, format.mintick), xloc.bar_index, yloc.price, color.new(#7B1FA2, 0), label.style_label_down, color.white, size.small)
 
+// ── Untested monthly VP levels ──
+var line[] untVAHlines = array.new_line(0)
+var line[] untVALlines = array.new_line(0)
+var line[] untPOClines = array.new_line(0)
+
+if barstate.islast and showUnt
+    if array.size(untVAHlines) > 0
+        for i = 0 to array.size(untVAHlines) - 1
+            line.delete(array.get(untVAHlines, i))
+    array.clear(untVAHlines)
+    if array.size(untVALlines) > 0
+        for i = 0 to array.size(untVALlines) - 1
+            line.delete(array.get(untVALlines, i))
+    array.clear(untVALlines)
+    if array.size(untPOClines) > 0
+        for i = 0 to array.size(untPOClines) - 1
+            line.delete(array.get(untPOClines, i))
+    array.clear(untPOClines)
+
+    if array.size(untVAH) > 0
+        for i = 0 to array.size(untVAH) - 1
+            array.push(untVAHlines, line.new(bar_index - 20, array.get(untVAH, i), bar_index, array.get(untVAH, i), xloc.bar_index, extend.right, color.new(#FF1744, 50), line.style_dashed, 1))
+    if array.size(untVAL) > 0
+        for i = 0 to array.size(untVAL) - 1
+            array.push(untVALlines, line.new(bar_index - 20, array.get(untVAL, i), bar_index, array.get(untVAL, i), xloc.bar_index, extend.right, color.new(#00E676, 50), line.style_dashed, 1))
+    if array.size(untPOC) > 0
+        for i = 0 to array.size(untPOC) - 1
+            array.push(untPOClines, line.new(bar_index - 20, array.get(untPOC, i), bar_index, array.get(untPOC, i), xloc.bar_index, extend.right, color.new(#FFC107, 50), line.style_dashed, 1))
+
 // ══════════════════════════════════════════════════════════
 //  DASHBOARD TABLE
 // ══════════════════════════════════════════════════════════
 
 tablePosition = tblPos == "Top Left" ? position.top_left : tblPos == "Bottom Right" ? position.bottom_right : tblPos == "Bottom Left" ? position.bottom_left : position.top_right
 
-var table tbl = showTbl ? table.new(tablePosition, 5, 23, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
+var table tbl = showTbl ? table.new(tablePosition, 5, 25, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
 
 if showTbl and barstate.islast and not na(tbl)
     hBg = color.new(#161b22, 0)
@@ -857,6 +976,20 @@ if showTbl and barstate.islast and not na(tbl)
     table.cell(tbl, 2, 22, not na(dispRR) ? (dispRR >= rrMin ? "PASS" : "FAIL") : "", text_color=not na(dispRR) ? (dispRR >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 3, 22, "", text_size=size.small)
     table.cell(tbl, 4, 22, "", text_size=size.small)
+
+    // Row 23 — Nearest Untested Support
+    table.cell(tbl, 0, 23, "Unt Sup", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 23, not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "—", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 23, distUntSup < 999.0 ? str.tostring(distUntSup, "#.##") + " ATR" : "", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 23, array.size(untVAL) > 0 ? str.tostring(array.size(untVAL)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 4, 23, "", text_size=size.small)
+
+    // Row 24 — Nearest Untested Resistance
+    table.cell(tbl, 0, 24, "Unt Res", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 24, not na(nearUntResPrice) ? str.tostring(nearUntResPrice, format.mintick) : "—", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 24, distUntRes < 999.0 ? str.tostring(distUntRes, "#.##") + " ATR" : "", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 24, array.size(untVAH) > 0 ? str.tostring(array.size(untVAH)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 4, 24, "", text_size=size.small)
 
 // ══════════════════════════════════════════════════════════
 //  ALERTS
