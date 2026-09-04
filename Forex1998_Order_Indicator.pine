@@ -477,9 +477,9 @@ float rrSell = sellStopDist > 0 ? (close - sellTarget) / sellStopDist : 0.0
 bool rrPassBuy  = rrBuy >= rrMin
 bool rrPassSell = rrSell >= rrMin
 
-// ── Final Signal ──
-bool mktBuy  = rawBuy  and not vetoed and qualPassBuy  and rrPassBuy
-bool mktSell = rawSell and not vetoed and qualPassSell and rrPassSell
+// ── Final Signal (confirmed bars only — prevents repainting) ──
+bool mktBuy  = rawBuy  and not vetoed and qualPassBuy  and rrPassBuy  and barstate.isconfirmed
+bool mktSell = rawSell and not vetoed and qualPassSell and rrPassSell and barstate.isconfirmed
 
 // ── Cooldown ──
 var int lastBuyBar  = -9999
