@@ -777,8 +777,8 @@ if showTbl and barstate.islast and not na(tbl)
 //  ALERTS
 // ══════════════════════════════════════════════════════════
 
-alertcondition(buyTrig,  "Market Buy",  "F98 V2 BUY at {{close}} — Regime: " + regime + " | Quality passed | R:R passed")
-alertcondition(sellTrig, "Market Sell", "F98 V2 SELL at {{close}} — Regime: " + regime + " | Quality passed | R:R passed")
+alertcondition(buyTrig,  "Market Buy",  "F98 V2 BUY at {{close}} — Quality passed | R:R passed")
+alertcondition(sellTrig, "Market Sell", "F98 V2 SELL at {{close}} — Quality passed | R:R passed")
 alertcondition(pendBuyWk  and not nz(pendBuyWk[1]),  "Pending Buy (Wk)",  "Pending BUY zone — Weekly VAL {{close}}")
 alertcondition(pendSellWk and not nz(pendSellWk[1]), "Pending Sell (Wk)", "Pending SELL zone — Weekly VAH {{close}}")
 alertcondition(pendBuyMo  and not nz(pendBuyMo[1]),  "Pending Buy (Mo)",  "Pending BUY zone — Monthly VAL {{close}}")
