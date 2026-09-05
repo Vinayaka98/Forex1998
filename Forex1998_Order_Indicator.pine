@@ -20,7 +20,8 @@ minQuality = input.int(65, "Min Quality Score", minval=0, maxval=100, group=g2, 
 rrMin   = input.float(2.0, "Min R:R Ratio", minval=0.0, maxval=5.0, step=0.1, group=g2, tooltip="Optimized: 2.0. Higher R:R ensures every trade has strong risk-adjusted edge.")
 cdBars  = input.int(5, "Signal Cooldown (bars)", minval=1, maxval=50, group=g2, tooltip="Optimized: 5. Slightly faster re-entry than Blueprint's 6 for volatile pairs.")
 atrBuf  = input.float(0.35, "Stop ATR Buffer", minval=0.0, maxval=1.0, step=0.05, group=g2, tooltip="Optimized: 0.35. Wider buffer for volatile/JPY pairs. Blueprint was 0.2.")
-minStopATR = input.float(0.8, "Min Stop Distance (ATR)", minval=0.1, maxval=3.0, step=0.1, group=g2, tooltip="Minimum stop distance as ATR multiple. Prevents tight stops on volatile pairs.")
+minStopATR = input.float(1.0, "Min Stop Distance (ATR)", minval=0.1, maxval=3.0, step=0.1, group=g2, tooltip="Minimum stop distance as ATR multiple. 1.0 ATR prevents tight stops on forex pairs.")
+pendRange = input.float(5.0, "Pending Range (ATR mult)", minval=2.0, maxval=10.0, step=0.5, group=g2, tooltip="How far ahead pending orders look. 5x proxATR means pending alerts fire well before price reaches the VP level.")
 buyOnly = input.bool(true, "Buy Only Mode", group=g2, tooltip="When enabled, all sell signals are vetoed. Backtesting shows sells have 17-26% WR on volatile pairs — buy-only doubles net performance.")
 
 // ── Exit ──
@@ -106,10 +107,11 @@ if wkReady
     if _whi > _wlo
         float bs = (_whi - _wlo) / vpRows
         for i = 0 to math.min(wkLen, 500)
+            float barVol = nz(volume[i], 0) > 0 ? volume[i] : 1.0
             int ix = math.min(int(math.floor((hlc3[i] - _wlo) / bs)), vpRows - 1)
             if ix >= 0 and ix < vpRows
-                array.set(wkBins, ix, array.get(wkBins, ix) + volume[i])
-            _wvol += volume[i]
+                array.set(wkBins, ix, array.get(wkBins, ix) + barVol)
+            _wvol += barVol
     [_wp, _wh, _wl] = vpCalc(wkBins, _whi, _wlo, _wvol, vpRows, vpVA)
     wkPOC := _wp
     wkVAH := _wh
@@ -155,10 +157,11 @@ if moReady
     if _mhi > _mlo
         float bs = (_mhi - _mlo) / vpRows
         for i = 0 to math.min(moLen, 2000)
+            float barVol = nz(volume[i], 0) > 0 ? volume[i] : 1.0
             int ix = math.min(int(math.floor((hlc3[i] - _mlo) / bs)), vpRows - 1)
             if ix >= 0 and ix < vpRows
-                array.set(moBins, ix, array.get(moBins, ix) + volume[i])
-            _mvol += volume[i]
+                array.set(moBins, ix, array.get(moBins, ix) + barVol)
+            _mvol += barVol
     [_mp, _mh, _ml] = vpCalc(moBins, _mhi, _mlo, _mvol, vpRows, vpVA)
     moPOC := _mp
     moVAH := _mh
@@ -426,11 +429,11 @@ qualityCalc(string dir, string reg, float vpDist) =>
 //  Sell: swing high + ATR buffer
 // ══════════════════════════════════════════════════════════
 
-float swingLow10  = ta.lowest(low, 10)
-float swingHigh10 = ta.highest(high, 10)
+float swingLow20  = ta.lowest(low, 20)
+float swingHigh20 = ta.highest(high, 20)
 
-float buySL  = swingLow10 - atrV * atrBuf
-float sellSL = swingHigh10 + atrV * atrBuf
+float buySL  = swingLow20 - atrV * atrBuf
+float sellSL = swingHigh20 + atrV * atrBuf
 
 float buyStopDist  = close - buySL
 float sellStopDist = sellSL - close
@@ -625,12 +628,12 @@ if not na(activeEntry)
 bool oscApproachOS = rsiV < 45 or rawK < 35 or wrV < -55
 bool oscApproachOB = rsiV > 55 or rawK > 65 or wrV > -45
 
-bool pendBuyWk  = not na(wkVAL) and distWkVAL > proxATR and distWkVAL < proxATR * 3 and oscApproachOS and regime != "BEAR"
-bool pendBuyMo  = not na(moVAL) and distMoVAL > proxATR and distMoVAL < proxATR * 3 and oscApproachOS and regime != "BEAR"
-bool pendSellWk = not buyOnly and not na(wkVAH) and distWkVAH > proxATR and distWkVAH < proxATR * 3 and oscApproachOB and regime != "BULL"
-bool pendSellMo = not buyOnly and not na(moVAH) and distMoVAH > proxATR and distMoVAH < proxATR * 3 and oscApproachOB and regime != "BULL"
-bool pendBuyUnt  = not na(nearUntSupPrice) and distUntSup > proxATR and distUntSup < proxATR * 3 and oscApproachOS and regime != "BEAR"
-bool pendSellUnt = not buyOnly and not na(nearUntResPrice) and distUntRes > proxATR and distUntRes < proxATR * 3 and oscApproachOB and regime != "BULL"
+bool pendBuyWk  = not na(wkVAL) and distWkVAL > proxATR and distWkVAL < proxATR * pendRange and oscApproachOS and regime != "BEAR"
+bool pendBuyMo  = not na(moVAL) and distMoVAL > proxATR and distMoVAL < proxATR * pendRange and oscApproachOS and regime != "BEAR"
+bool pendSellWk = not buyOnly and not na(wkVAH) and distWkVAH > proxATR and distWkVAH < proxATR * pendRange and oscApproachOB and regime != "BULL"
+bool pendSellMo = not buyOnly and not na(moVAH) and distMoVAH > proxATR and distMoVAH < proxATR * pendRange and oscApproachOB and regime != "BULL"
+bool pendBuyUnt  = not na(nearUntSupPrice) and distUntSup > proxATR and distUntSup < proxATR * pendRange and oscApproachOS and regime != "BEAR"
+bool pendSellUnt = not buyOnly and not na(nearUntResPrice) and distUntRes > proxATR and distUntRes < proxATR * pendRange and oscApproachOB and regime != "BULL"
 
 // ── Signal Text ──
 string sigText = "WAIT"
@@ -704,12 +707,12 @@ else if hasPending
     dispDir := pendIsBuy ? "BUY" : "SELL"
     if not na(dispEntry) and atrV > 0
         if pendIsBuy
-            float pSD = math.max(atrV * minStopATR, dispEntry - swingLow10 + atrV * atrBuf)
+            float pSD = math.max(atrV * minStopATR, dispEntry - swingLow20 + atrV * atrBuf)
             dispSL := dispEntry - pSD
             dispTP := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : dispEntry + pSD * rrMin
             dispRR := pSD > 0 ? (dispTP - dispEntry) / pSD : 0.0
         else
-            float pSD = math.max(atrV * minStopATR, swingHigh10 + atrV * atrBuf - dispEntry)
+            float pSD = math.max(atrV * minStopATR, swingHigh20 + atrV * atrBuf - dispEntry)
             dispSL := dispEntry + pSD
             dispTP := not na(wkVAL) ? wkVAL : not na(moVAL) ? moVAL : dispEntry - pSD * rrMin
             dispRR := pSD > 0 ? (dispEntry - dispTP) / pSD : 0.0
@@ -815,7 +818,7 @@ if barstate.islast and showUnt
 
 tablePosition = tblPos == "Top Left" ? position.top_left : tblPos == "Bottom Right" ? position.bottom_right : tblPos == "Bottom Left" ? position.bottom_left : position.top_right
 
-var table tbl = showTbl ? table.new(tablePosition, 5, 25, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
+var table tbl = showTbl ? table.new(tablePosition, 5, 26, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
 
 if showTbl and barstate.islast and not na(tbl)
     hBg = color.new(#161b22, 0)
@@ -964,55 +967,65 @@ if showTbl and barstate.islast and not na(tbl)
 
     // Row 18 — Pending Order
     bool pendYes = dispType == "PENDING"
+    float pendATRaway = pendYes and not na(dispEntry) and atrV > 0 ? math.abs(close - dispEntry) / atrV : na
     table.cell(tbl, 0, 18, "Pending", text_color=mFg, text_size=size.small, text_halign=text.align_left)
     table.cell(tbl, 1, 18, pendYes ? "YES" : "NO", text_color=pendYes ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 2, 18, pendYes and not na(dispEntry) ? "@ " + str.tostring(dispEntry, format.mintick) : "—", text_color=pendYes ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 18, "", text_size=size.small)
+    table.cell(tbl, 3, 18, not na(pendATRaway) ? str.tostring(pendATRaway, "#.#") + " ATR away" : "", text_color=mFg, text_size=size.small, text_halign=text.align_left)
     table.cell(tbl, 4, 18, "", text_size=size.small)
 
-    // Row 19 — Market Order
-    bool mktYes = dispType == "MARKET" or dispType == "ACTIVE"
+    // Row 19 — Market Price (always current close)
     table.cell(tbl, 0, 19, "Market", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    bool mktYes = dispType == "MARKET" or dispType == "ACTIVE"
     table.cell(tbl, 1, 19, mktYes ? "YES" : "NO", text_color=mktYes ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 19, mktYes and not na(dispEntry) ? "@ " + str.tostring(dispEntry, format.mintick) : "—", text_color=mktYes ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 19, "@ " + str.tostring(close, format.mintick), text_color=dFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 3, 19, "", text_size=size.small)
     table.cell(tbl, 4, 19, "", text_size=size.small)
 
-    // Row 20 — Stop Loss
-    table.cell(tbl, 0, 20, "Stop Loss", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 20, not na(dispSL) ? str.tostring(dispSL, format.mintick) : "—", text_color=not na(dispSL) ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 20, "", text_size=size.small)
+    // Row 20 — Entry (active trade entry price + P/L)
+    float activePL = not na(activeEntryPrice) ? (activeIsBuy ? close - activeEntryPrice : activeEntryPrice - close) : na
+    table.cell(tbl, 0, 20, "Entry", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 20, not na(activeEntryPrice) ? str.tostring(activeEntryPrice, format.mintick) : "—", text_color=not na(activeEntryPrice) ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 20, not na(activePL) ? (activePL >= 0 ? "+" : "") + str.tostring(activePL / syminfo.mintick, "#") + " pips" : "—", text_color=not na(activePL) ? (activePL >= 0 ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 3, 20, "", text_size=size.small)
     table.cell(tbl, 4, 20, "", text_size=size.small)
 
-    // Row 21 — Take Profit
-    table.cell(tbl, 0, 21, "Take Profit", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 21, not na(dispTP) ? str.tostring(dispTP, format.mintick) : "—", text_color=not na(dispTP) ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 21, "", text_size=size.small)
+    // Row 21 — Stop Loss
+    float slATRdist = not na(dispSL) and atrV > 0 ? math.abs(close - dispSL) / atrV : na
+    table.cell(tbl, 0, 21, "Stop Loss", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 21, not na(dispSL) ? str.tostring(dispSL, format.mintick) : "—", text_color=not na(dispSL) ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 21, not na(slATRdist) ? str.tostring(slATRdist, "#.#") + " ATR" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 3, 21, "", text_size=size.small)
     table.cell(tbl, 4, 21, "", text_size=size.small)
 
-    // Row 22 — Expected R:R
-    color dispRRCol = not na(dispRR) and dispRR >= 2.5 ? color.new(#00E676, 0) : not na(dispRR) and dispRR >= 2.0 ? color.new(#26A69A, 0) : not na(dispRR) and dispRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
-    table.cell(tbl, 0, 22, "Exp. R:R", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 22, not na(dispRR) ? str.tostring(dispRR, "#.#") + "R" : "—", text_color=not na(dispRR) ? dispRRCol : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 22, not na(dispRR) ? (dispRR >= rrMin ? "PASS" : "FAIL") : "", text_color=not na(dispRR) ? (dispRR >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
+    // Row 22 — Take Profit
+    table.cell(tbl, 0, 22, "Take Profit", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 22, not na(dispTP) ? str.tostring(dispTP, format.mintick) : "—", text_color=not na(dispTP) ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 22, "", text_size=size.small)
     table.cell(tbl, 3, 22, "", text_size=size.small)
     table.cell(tbl, 4, 22, "", text_size=size.small)
 
-    // Row 23 — Nearest Untested Support
-    table.cell(tbl, 0, 23, "Unt Sup", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 23, not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "—", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 23, distUntSup < 999.0 ? str.tostring(distUntSup, "#.##") + " ATR" : "", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 23, array.size(untVAL) > 0 ? str.tostring(array.size(untVAL)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    // Row 23 — Expected R:R
+    color dispRRCol = not na(dispRR) and dispRR >= 2.5 ? color.new(#00E676, 0) : not na(dispRR) and dispRR >= 2.0 ? color.new(#26A69A, 0) : not na(dispRR) and dispRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(tbl, 0, 23, "Exp. R:R", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 23, not na(dispRR) ? str.tostring(dispRR, "#.#") + "R" : "—", text_color=not na(dispRR) ? dispRRCol : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 23, not na(dispRR) ? (dispRR >= rrMin ? "PASS" : "FAIL") : "", text_color=not na(dispRR) ? (dispRR >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 23, "", text_size=size.small)
     table.cell(tbl, 4, 23, "", text_size=size.small)
 
-    // Row 24 — Nearest Untested Resistance
-    table.cell(tbl, 0, 24, "Unt Res", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 24, not na(nearUntResPrice) ? str.tostring(nearUntResPrice, format.mintick) : "—", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 24, distUntRes < 999.0 ? str.tostring(distUntRes, "#.##") + " ATR" : "", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 24, array.size(untVAH) > 0 ? str.tostring(array.size(untVAH)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    // Row 24 — Nearest Untested Support
+    table.cell(tbl, 0, 24, "Unt Sup", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 24, not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "—", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 24, distUntSup < 999.0 ? str.tostring(distUntSup, "#.##") + " ATR" : "", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 24, array.size(untVAL) > 0 ? str.tostring(array.size(untVAL)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 4, 24, "", text_size=size.small)
+
+    // Row 25 — Nearest Untested Resistance
+    table.cell(tbl, 0, 25, "Unt Res", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 25, not na(nearUntResPrice) ? str.tostring(nearUntResPrice, format.mintick) : "—", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 25, distUntRes < 999.0 ? str.tostring(distUntRes, "#.##") + " ATR" : "", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 25, array.size(untVAH) > 0 ? str.tostring(array.size(untVAH)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 4, 25, "", text_size=size.small)
 
 // ══════════════════════════════════════════════════════════
 //  ALERTS
