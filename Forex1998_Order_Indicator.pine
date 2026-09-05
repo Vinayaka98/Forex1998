@@ -730,13 +730,34 @@ color dispTypeCol = dispType == "MARKET" ? color.new(#00E676, 0) : dispType == "
 //  PLOTS
 // ══════════════════════════════════════════════════════════
 
-// VP levels
-plot(showWk ? wkPOC : na, "Wk POC", color.new(#FF9800, 30), 1, plot.style_stepline)
-plot(showWk ? wkVAH : na, "Wk VAH", color.new(#EF5350, 30), 1, plot.style_stepline)
-plot(showWk ? wkVAL : na, "Wk VAL", color.new(#26A69A, 30), 1, plot.style_stepline)
-plot(showMo ? moPOC : na, "Mo POC", color.new(#FF9800, 0), 2, plot.style_stepline)
-plot(showMo ? moVAH : na, "Mo VAH", color.new(#EF5350, 0), 2, plot.style_stepline)
-plot(showMo ? moVAL : na, "Mo VAL", color.new(#26A69A, 0), 2, plot.style_stepline)
+// VP levels — drawn as lines so they stay at the current value regardless of scroll
+var line lnWkPOC = na
+var line lnWkVAH = na
+var line lnWkVAL = na
+var line lnMoPOC = na
+var line lnMoVAH = na
+var line lnMoVAL = na
+
+if barstate.islast
+    line.delete(lnWkPOC)
+    line.delete(lnWkVAH)
+    line.delete(lnWkVAL)
+    line.delete(lnMoPOC)
+    line.delete(lnMoVAH)
+    line.delete(lnMoVAL)
+
+    if showWk and not na(wkPOC)
+        lnWkPOC := line.new(bar_index - 50, wkPOC, bar_index + 10, wkPOC, xloc.bar_index, extend.both, color.new(#FF9800, 30), line.style_solid, 1)
+    if showWk and not na(wkVAH)
+        lnWkVAH := line.new(bar_index - 50, wkVAH, bar_index + 10, wkVAH, xloc.bar_index, extend.both, color.new(#EF5350, 30), line.style_solid, 1)
+    if showWk and not na(wkVAL)
+        lnWkVAL := line.new(bar_index - 50, wkVAL, bar_index + 10, wkVAL, xloc.bar_index, extend.both, color.new(#26A69A, 30), line.style_solid, 1)
+    if showMo and not na(moPOC)
+        lnMoPOC := line.new(bar_index - 50, moPOC, bar_index + 10, moPOC, xloc.bar_index, extend.both, color.new(#FF9800, 0), line.style_solid, 2)
+    if showMo and not na(moVAH)
+        lnMoVAH := line.new(bar_index - 50, moVAH, bar_index + 10, moVAH, xloc.bar_index, extend.both, color.new(#EF5350, 0), line.style_solid, 2)
+    if showMo and not na(moVAL)
+        lnMoVAL := line.new(bar_index - 50, moVAL, bar_index + 10, moVAL, xloc.bar_index, extend.both, color.new(#26A69A, 0), line.style_solid, 2)
 
 // Market signals with entry price label
 if buyTrig
@@ -815,7 +836,7 @@ if barstate.islast and showUnt
 
 tablePosition = tblPos == "Top Left" ? position.top_left : tblPos == "Bottom Right" ? position.bottom_right : tblPos == "Bottom Left" ? position.bottom_left : position.top_right
 
-var table tbl = showTbl ? table.new(tablePosition, 5, 25, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
+var table tbl = showTbl ? table.new(tablePosition, 5, 26, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
 
 if showTbl and barstate.islast and not na(tbl)
     hBg = color.new(#161b22, 0)
@@ -970,49 +991,56 @@ if showTbl and barstate.islast and not na(tbl)
     table.cell(tbl, 3, 18, "", text_size=size.small)
     table.cell(tbl, 4, 18, "", text_size=size.small)
 
-    // Row 19 — Market Order
+    // Row 19 — Market Price (always shows current close)
     bool mktYes = dispType == "MARKET" or dispType == "ACTIVE"
     table.cell(tbl, 0, 19, "Market", text_color=mFg, text_size=size.small, text_halign=text.align_left)
     table.cell(tbl, 1, 19, mktYes ? "YES" : "NO", text_color=mktYes ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 19, mktYes and not na(dispEntry) ? "@ " + str.tostring(dispEntry, format.mintick) : "—", text_color=mktYes ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 19, mktYes ? "@ " + str.tostring(close, format.mintick) : "—", text_color=mktYes ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 3, 19, "", text_size=size.small)
     table.cell(tbl, 4, 19, "", text_size=size.small)
 
-    // Row 20 — Stop Loss
-    table.cell(tbl, 0, 20, "Stop Loss", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 20, not na(dispSL) ? str.tostring(dispSL, format.mintick) : "—", text_color=not na(dispSL) ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 20, "", text_size=size.small)
+    // Row 20 — Entry Price (the price at which the trade was entered)
+    table.cell(tbl, 0, 20, "Entry", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 20, not na(dispEntry) ? str.tostring(dispEntry, format.mintick) : "—", text_color=not na(dispEntry) ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 20, hasActiveTrade and not na(activeEntryPrice) ? (close >= activeEntryPrice ? "+" : "") + str.tostring(close - activeEntryPrice, format.mintick) + " P/L" : "", text_color=hasActiveTrade and not na(activeEntryPrice) ? (close >= activeEntryPrice ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 3, 20, "", text_size=size.small)
     table.cell(tbl, 4, 20, "", text_size=size.small)
 
-    // Row 21 — Take Profit
-    table.cell(tbl, 0, 21, "Take Profit", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 21, not na(dispTP) ? str.tostring(dispTP, format.mintick) : "—", text_color=not na(dispTP) ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    // Row 21 — Stop Loss
+    table.cell(tbl, 0, 21, "Stop Loss", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 21, not na(dispSL) ? str.tostring(dispSL, format.mintick) : "—", text_color=not na(dispSL) ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 2, 21, "", text_size=size.small)
     table.cell(tbl, 3, 21, "", text_size=size.small)
     table.cell(tbl, 4, 21, "", text_size=size.small)
 
-    // Row 22 — Expected R:R
-    color dispRRCol = not na(dispRR) and dispRR >= 2.5 ? color.new(#00E676, 0) : not na(dispRR) and dispRR >= 2.0 ? color.new(#26A69A, 0) : not na(dispRR) and dispRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
-    table.cell(tbl, 0, 22, "Exp. R:R", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 22, not na(dispRR) ? str.tostring(dispRR, "#.#") + "R" : "—", text_color=not na(dispRR) ? dispRRCol : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 22, not na(dispRR) ? (dispRR >= rrMin ? "PASS" : "FAIL") : "", text_color=not na(dispRR) ? (dispRR >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
+    // Row 22 — Take Profit
+    table.cell(tbl, 0, 22, "Take Profit", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 22, not na(dispTP) ? str.tostring(dispTP, format.mintick) : "—", text_color=not na(dispTP) ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 22, "", text_size=size.small)
     table.cell(tbl, 3, 22, "", text_size=size.small)
     table.cell(tbl, 4, 22, "", text_size=size.small)
 
-    // Row 23 — Nearest Untested Support
-    table.cell(tbl, 0, 23, "Unt Sup", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 23, not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "—", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 23, distUntSup < 999.0 ? str.tostring(distUntSup, "#.##") + " ATR" : "", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 23, array.size(untVAL) > 0 ? str.tostring(array.size(untVAL)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    // Row 23 — Expected R:R
+    color dispRRCol = not na(dispRR) and dispRR >= 2.5 ? color.new(#00E676, 0) : not na(dispRR) and dispRR >= 2.0 ? color.new(#26A69A, 0) : not na(dispRR) and dispRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(tbl, 0, 23, "Exp. R:R", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 23, not na(dispRR) ? str.tostring(dispRR, "#.#") + "R" : "—", text_color=not na(dispRR) ? dispRRCol : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 23, not na(dispRR) ? (dispRR >= rrMin ? "PASS" : "FAIL") : "", text_color=not na(dispRR) ? (dispRR >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 23, "", text_size=size.small)
     table.cell(tbl, 4, 23, "", text_size=size.small)
 
-    // Row 24 — Nearest Untested Resistance
-    table.cell(tbl, 0, 24, "Unt Res", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 24, not na(nearUntResPrice) ? str.tostring(nearUntResPrice, format.mintick) : "—", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 24, distUntRes < 999.0 ? str.tostring(distUntRes, "#.##") + " ATR" : "", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 24, array.size(untVAH) > 0 ? str.tostring(array.size(untVAH)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    // Row 24 — Nearest Untested Support
+    table.cell(tbl, 0, 24, "Unt Sup", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 24, not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "—", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 24, distUntSup < 999.0 ? str.tostring(distUntSup, "#.##") + " ATR" : "", text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 24, array.size(untVAL) > 0 ? str.tostring(array.size(untVAL)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 4, 24, "", text_size=size.small)
+
+    // Row 25 — Nearest Untested Resistance
+    table.cell(tbl, 0, 25, "Unt Res", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 25, not na(nearUntResPrice) ? str.tostring(nearUntResPrice, format.mintick) : "—", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 25, distUntRes < 999.0 ? str.tostring(distUntRes, "#.##") + " ATR" : "", text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 25, array.size(untVAH) > 0 ? str.tostring(array.size(untVAH)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 4, 25, "", text_size=size.small)
 
 // ══════════════════════════════════════════════════════════
 //  ALERTS
