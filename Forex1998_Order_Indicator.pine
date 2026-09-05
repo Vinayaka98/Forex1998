@@ -1,5 +1,5 @@
 //@version=5
-indicator("Forex1998 Blueprint V2 Order Indicator", "F98 V2", true, max_bars_back=5000, max_labels_count=300, max_lines_count=200)
+indicator("Forex1998 Blueprint V2 Order Indicator", "F98 V2", true, max_bars_back=5000, max_labels_count=300, max_lines_count=200, max_boxes_count=500)
 
 // ══════════════════════════════════════════════════════════
 //  INPUTS
@@ -11,6 +11,8 @@ vpRows  = input.int(100, "Rows", minval=10, maxval=200, group=g1)
 vpVA    = input.float(69, "Value Area %", minval=50, maxval=95, step=1, group=g1)
 showWk  = input.bool(true, "Show Weekly Levels", group=g1)
 showMo  = input.bool(true, "Show Monthly Levels", group=g1)
+showVP  = input.bool(true, "Show VP Histogram", group=g1)
+vpBarW  = input.int(40, "VP Bar Width", minval=5, maxval=100, group=g1, tooltip="Width of VP histogram bars in chart bars.")
 
 // ── Strategy ──
 g2      = "Strategy Settings"
@@ -84,6 +86,10 @@ vpCalc(float[] bins, float hi, float lo, float totV, int rows, float vaPct) =>
 
 // ── Calendar-Aligned Weekly VP ──
 var float[] wkBins = array.new_float(vpRows, 0.0)
+var float[] wkBinsUp = array.new_float(vpRows, 0.0)
+var float[] wkBinsDn = array.new_float(vpRows, 0.0)
+var float wkHi = na
+var float wkLo = na
 var int   wkStartBar = -1
 var bool  wkReady = false
 
@@ -98,6 +104,8 @@ float wkVAL = na
 if wkReady
     int wkLen = bar_index - wkStartBar
     array.fill(wkBins, 0.0)
+    array.fill(wkBinsUp, 0.0)
+    array.fill(wkBinsDn, 0.0)
     float _whi = high
     float _wlo = low
     for i = 0 to math.min(wkLen, 500)
@@ -111,14 +119,24 @@ if wkReady
             int ix = math.min(int(math.floor((hlc3[i] - _wlo) / bs)), vpRows - 1)
             if ix >= 0 and ix < vpRows
                 array.set(wkBins, ix, array.get(wkBins, ix) + barVol)
+                if close[i] >= open[i]
+                    array.set(wkBinsUp, ix, array.get(wkBinsUp, ix) + barVol)
+                else
+                    array.set(wkBinsDn, ix, array.get(wkBinsDn, ix) + barVol)
             _wvol += barVol
     [_wp, _wh, _wl] = vpCalc(wkBins, _whi, _wlo, _wvol, vpRows, vpVA)
     wkPOC := _wp
     wkVAH := _wh
     wkVAL := _wl
+    wkHi := _whi
+    wkLo := _wlo
 
 // ── Calendar-Aligned Monthly VP + Untested Level Tracking ──
 var float[] moBins = array.new_float(vpRows, 0.0)
+var float[] moBinsUp = array.new_float(vpRows, 0.0)
+var float[] moBinsDn = array.new_float(vpRows, 0.0)
+var float moHi = na
+var float moLo = na
 var int   moStartBar = -1
 var bool  moReady = false
 var float moPOCsave = na
@@ -148,6 +166,8 @@ float moVAL = na
 if moReady
     int moLen = bar_index - moStartBar
     array.fill(moBins, 0.0)
+    array.fill(moBinsUp, 0.0)
+    array.fill(moBinsDn, 0.0)
     float _mhi = high
     float _mlo = low
     for i = 0 to math.min(moLen, 2000)
@@ -161,6 +181,10 @@ if moReady
             int ix = math.min(int(math.floor((hlc3[i] - _mlo) / bs)), vpRows - 1)
             if ix >= 0 and ix < vpRows
                 array.set(moBins, ix, array.get(moBins, ix) + barVol)
+                if close[i] >= open[i]
+                    array.set(moBinsUp, ix, array.get(moBinsUp, ix) + barVol)
+                else
+                    array.set(moBinsDn, ix, array.get(moBinsDn, ix) + barVol)
             _mvol += barVol
     [_mp, _mh, _ml] = vpCalc(moBins, _mhi, _mlo, _mvol, vpRows, vpVA)
     moPOC := _mp
@@ -169,6 +193,8 @@ if moReady
     moPOCsave := _mp
     moVAHsave := _mh
     moVALsave := _ml
+    moHi := _mhi
+    moLo := _mlo
 
 // Remove tested untested levels
 if array.size(untVAH) > 0
@@ -461,11 +487,16 @@ bool stratB_sell = regime == "RANGE" and nearRes and close <= nz(math.max(nz(wkV
 // ── V11 Hybrid: Oscillator extreme + VP + momentum ──
 bool oscOversold  = rsiV < rsiOS or rawK < 25 or wrV < -75
 bool oscOverbought = rsiV > rsiOB or rawK > 75 or wrV > -25
-float prevScore = nz(score[1], 0)
-bool momBullish = score > prevScore
-bool momBearish = score < prevScore
-bool v11_buy  = oscOversold and nearSup and momBullish and regime != "BEAR"
-bool v11_sell = oscOverbought and nearRes and momBearish and regime != "BULL"
+float scoreMA3 = (score + nz(score[1], score) + nz(score[2], score)) / 3.0
+float scoreMA6 = (nz(score[3], score) + nz(score[4], score) + nz(score[5], score)) / 3.0
+bool momBullish = scoreMA3 > scoreMA6 or score > 0.1
+bool momBearish = scoreMA3 < scoreMA6 or score < -0.1
+bool v11_buy_classic = oscOversold and (nearSup or nearPOC) and momBullish and regime != "BEAR"
+bool v11_buy_poc = nearPOC and score > 0.1 and close > open and regime != "BEAR"
+bool v11_buy  = v11_buy_classic or v11_buy_poc
+bool v11_sell_classic = oscOverbought and (nearRes or nearPOC) and momBearish and regime != "BULL"
+bool v11_sell_poc = not buyOnly and nearPOC and score < -0.1 and close < open and regime != "BULL"
+bool v11_sell = v11_sell_classic or v11_sell_poc
 
 // ── Select active strategy ──
 bool rawBuy  = false
@@ -741,11 +772,11 @@ plot(showMo ? moPOC : na, "Mo POC", color.new(#FF9800, 0), 2, plot.style_steplin
 plot(showMo ? moVAH : na, "Mo VAH", color.new(#EF5350, 0), 2, plot.style_stepline)
 plot(showMo ? moVAL : na, "Mo VAL", color.new(#26A69A, 0), 2, plot.style_stepline)
 
-// Market signals with entry price label
+// Market signals with entry price, SL, TP, R:R label
 if buyTrig
-    label.new(bar_index, low, "BUY\n" + str.tostring(close, format.mintick), xloc.bar_index, yloc.price, color.new(#00E676, 0), label.style_label_up, color.white, size.normal)
+    label.new(bar_index, low, "BUY @ " + str.tostring(close, format.mintick) + "\nSL " + str.tostring(buySL, format.mintick) + " | TP " + str.tostring(buyTarget, format.mintick) + "\nR:R " + str.tostring(rrBuy, "#.#"), xloc.bar_index, yloc.price, color.new(#00E676, 0), label.style_label_up, color.white, size.normal)
 if sellTrig
-    label.new(bar_index, high, "SELL\n" + str.tostring(close, format.mintick), xloc.bar_index, yloc.price, color.new(#FF1744, 0), label.style_label_down, color.white, size.normal)
+    label.new(bar_index, high, "SELL @ " + str.tostring(close, format.mintick) + "\nSL " + str.tostring(sellSL, format.mintick) + " | TP " + str.tostring(sellTarget, format.mintick) + "\nR:R " + str.tostring(rrSell, "#.#"), xloc.bar_index, yloc.price, color.new(#FF1744, 0), label.style_label_down, color.white, size.normal)
 
 // Active stop/target lines
 plot(showSL and not na(activeSL) ? activeSL : na, "Active SL", color.new(#FF1744, 40), 1, plot.style_linebr)
@@ -811,6 +842,49 @@ if barstate.islast and showUnt
     if array.size(untPOC) > 0
         for i = 0 to array.size(untPOC) - 1
             array.push(untPOClines, line.new(bar_index - 20, array.get(untPOC, i), bar_index, array.get(untPOC, i), xloc.bar_index, extend.right, color.new(#FFC107, 50), line.style_dashed, 1))
+
+// ── VP Histogram Bars (boxes) ──
+var box[] vpBoxes = array.new_box(0)
+
+if barstate.islast and showVP
+    if array.size(vpBoxes) > 0
+        for i = 0 to array.size(vpBoxes) - 1
+            box.delete(array.get(vpBoxes, i))
+    array.clear(vpBoxes)
+    int dRows = 24
+    if showMo and not na(moHi) and not na(moLo) and moHi > moLo
+        float moDBS = (moHi - moLo) / dRows
+        float moMaxDV = 0.0
+        for d = 0 to dRows - 1
+            float tv = 0.0
+            int s = int(d * vpRows / dRows)
+            int e = int((d + 1) * vpRows / dRows) - 1
+            for j = math.max(0, s) to math.min(vpRows - 1, e)
+                tv += array.get(moBins, j)
+            if tv > moMaxDV
+                moMaxDV := tv
+        if moMaxDV > 0
+            for d = 0 to dRows - 1
+                float vu = 0.0
+                float vdn = 0.0
+                int s = int(d * vpRows / dRows)
+                int e = int((d + 1) * vpRows / dRows) - 1
+                for j = math.max(0, s) to math.min(vpRows - 1, e)
+                    vu += array.get(moBinsUp, j)
+                    vdn += array.get(moBinsDn, j)
+                float tv = vu + vdn
+                if tv > 0
+                    float rowLo = moLo + d * moDBS
+                    float rowHi = rowLo + moDBS
+                    int totalW = math.max(1, int(math.round(tv / moMaxDV * vpBarW)))
+                    int upW = math.max(1, int(math.round(vu / tv * totalW)))
+                    int dnW = math.max(1, totalW - upW)
+                    int x1 = bar_index + 3
+                    if vu > 0
+                        array.push(vpBoxes, box.new(x1, rowHi, x1 + upW, rowLo, border_color=na, bgcolor=color.new(#26A69A, 40)))
+                    if vdn > 0
+                        int dnStart = vu > 0 ? x1 + upW : x1
+                        array.push(vpBoxes, box.new(dnStart, rowHi, dnStart + dnW, rowLo, border_color=na, bgcolor=color.new(#EF5350, 40)))
 
 // ══════════════════════════════════════════════════════════
 //  DASHBOARD TABLE
