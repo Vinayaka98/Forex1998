@@ -1,5 +1,5 @@
 //@version=5
-indicator("Forex1998 Blueprint V2 Order Indicator", "F98 V2", true, max_bars_back=5000, max_labels_count=200, max_lines_count=100)
+indicator("Forex1998 Blueprint V2 Order Indicator", "F98 V2", true, max_bars_back=5000, max_labels_count=300, max_lines_count=200)
 
 // ══════════════════════════════════════════════════════════
 //  INPUTS
@@ -610,16 +610,16 @@ if not na(activeEntry)
             float newSL = low - atrV * 0.3
             if newSL > activeSL
                 activeSL := newSL
-            if exitMode == "Struct_Trail_BE" and (high - close[nz(activeEntry, bar_index)]) > buyStopDist * 0.5
-                if activeSL < close[nz(activeEntry, bar_index)]
-                    activeSL := close[nz(activeEntry, bar_index)] + atrV * 0.05
+            if exitMode == "Struct_Trail_BE" and not na(activeEntryPrice) and (high - activeEntryPrice) > buyStopDist * 0.5
+                if activeSL < activeEntryPrice
+                    activeSL := activeEntryPrice + atrV * 0.05
         else
             float newSL = high + atrV * 0.3
             if newSL < activeSL
                 activeSL := newSL
-            if exitMode == "Struct_Trail_BE" and (close[nz(activeEntry, bar_index)] - low) > sellStopDist * 0.5
-                if activeSL > close[nz(activeEntry, bar_index)]
-                    activeSL := close[nz(activeEntry, bar_index)] - atrV * 0.05
+            if exitMode == "Struct_Trail_BE" and not na(activeEntryPrice) and (activeEntryPrice - low) > sellStopDist * 0.5
+                if activeSL > activeEntryPrice
+                    activeSL := activeEntryPrice - atrV * 0.05
 
 // ── Pending Orders ──
 bool oscApproachOS = rsiV < 45 or rawK < 35 or wrV < -55
@@ -629,6 +629,8 @@ bool pendBuyWk  = not na(wkVAL) and distWkVAL > proxATR and distWkVAL < proxATR 
 bool pendBuyMo  = not na(moVAL) and distMoVAL > proxATR and distMoVAL < proxATR * 3 and oscApproachOS and regime != "BEAR"
 bool pendSellWk = not buyOnly and not na(wkVAH) and distWkVAH > proxATR and distWkVAH < proxATR * 3 and oscApproachOB and regime != "BULL"
 bool pendSellMo = not buyOnly and not na(moVAH) and distMoVAH > proxATR and distMoVAH < proxATR * 3 and oscApproachOB and regime != "BULL"
+bool pendBuyUnt  = not na(nearUntSupPrice) and distUntSup > proxATR and distUntSup < proxATR * 3 and oscApproachOS and regime != "BEAR"
+bool pendSellUnt = not buyOnly and not na(nearUntResPrice) and distUntRes > proxATR and distUntRes < proxATR * 3 and oscApproachOB and regime != "BULL"
 
 // ── Signal Text ──
 string sigText = "WAIT"
@@ -652,9 +654,15 @@ else if pendSellMo
 else if pendSellWk
     sigText := "PEND SELL @ " + str.tostring(wkVAH, format.mintick)
     sigCol  := color.new(#AA00FF, 0)
+else if pendBuyUnt
+    sigText := "PEND BUY @ " + str.tostring(nearUntSupPrice, format.mintick) + " (Unt)"
+    sigCol  := color.new(#2979FF, 0)
+else if pendSellUnt
+    sigText := "PEND SELL @ " + str.tostring(nearUntResPrice, format.mintick) + " (Unt)"
+    sigCol  := color.new(#AA00FF, 0)
 
 // ── Order details for dashboard ──
-bool hasPending = pendBuyWk or pendBuyMo or pendSellWk or pendSellMo
+bool hasPending = pendBuyWk or pendBuyMo or pendSellWk or pendSellMo or pendBuyUnt or pendSellUnt
 bool hasMarket = buyTrig or sellTrig
 bool hasActiveTrade = not na(activeSL)
 
@@ -680,15 +688,19 @@ if hasMarket
         dispDir := "SELL"
 else if hasPending
     dispType := "PENDING"
-    bool pendIsBuy = pendBuyWk or pendBuyMo
+    bool pendIsBuy = pendBuyWk or pendBuyMo or pendBuyUnt
     if pendBuyMo
         dispEntry := moVAL
     else if pendBuyWk
         dispEntry := wkVAL
+    else if pendBuyUnt
+        dispEntry := nearUntSupPrice
     else if pendSellMo
         dispEntry := moVAH
     else if pendSellWk
         dispEntry := wkVAH
+    else if pendSellUnt
+        dispEntry := nearUntResPrice
     dispDir := pendIsBuy ? "BUY" : "SELL"
     if not na(dispEntry) and atrV > 0
         if pendIsBuy
@@ -744,12 +756,16 @@ var label lPBw = na
 var label lPBm = na
 var label lPSw = na
 var label lPSm = na
+var label lPBu = na
+var label lPSu = na
 
 if barstate.islast and showPnd
     label.delete(lPBw)
     label.delete(lPBm)
     label.delete(lPSw)
     label.delete(lPSm)
+    label.delete(lPBu)
+    label.delete(lPSu)
 
     if pendBuyWk
         lPBw := label.new(bar_index + 3, wkVAL, "PEND BUY (Wk)\n" + str.tostring(wkVAL, format.mintick), xloc.bar_index, yloc.price, color.new(#2979FF, 0), label.style_label_up, color.white, size.small)
@@ -759,6 +775,10 @@ if barstate.islast and showPnd
         lPSw := label.new(bar_index + 3, wkVAH, "PEND SELL (Wk)\n" + str.tostring(wkVAH, format.mintick), xloc.bar_index, yloc.price, color.new(#AA00FF, 0), label.style_label_down, color.white, size.small)
     if pendSellMo
         lPSm := label.new(bar_index + 8, moVAH, "PEND SELL (Mo)\n" + str.tostring(moVAH, format.mintick), xloc.bar_index, yloc.price, color.new(#7B1FA2, 0), label.style_label_down, color.white, size.small)
+    if pendBuyUnt and not na(nearUntSupPrice)
+        lPBu := label.new(bar_index + 13, nearUntSupPrice, "PEND BUY (Unt)\n" + str.tostring(nearUntSupPrice, format.mintick), xloc.bar_index, yloc.price, color.new(#0D47A1, 0), label.style_label_up, color.white, size.small)
+    if pendSellUnt and not na(nearUntResPrice)
+        lPSu := label.new(bar_index + 13, nearUntResPrice, "PEND SELL (Unt)\n" + str.tostring(nearUntResPrice, format.mintick), xloc.bar_index, yloc.price, color.new(#4A148C, 0), label.style_label_down, color.white, size.small)
 
 // ── Untested monthly VP levels ──
 var line[] untVAHlines = array.new_line(0)
@@ -886,9 +906,12 @@ if showTbl and barstate.islast and not na(tbl)
     table.cell(tbl, 3, 8, "", text_size=size.small)
     table.cell(tbl, 4, 8, "", text_size=size.small)
 
-    // Row 9 — spacer
-    for c = 0 to 4
-        table.cell(tbl, c, 9, "", text_size=size.tiny)
+    // Row 9 — Signal
+    table.cell(tbl, 0, 9, "Signal", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 9, sigText, text_color=sigCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 2, 9, "", text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 3, 9, "", text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 4, 9, "", text_size=size.small, bgcolor=hBg)
 
     // Rows 10-12 — Weekly VP
     table.cell(tbl, 0, 10, "Wk VAH", text_color=color.new(#EF5350, 0), text_size=size.small, text_halign=text.align_left)
@@ -1001,5 +1024,7 @@ alertcondition(pendBuyWk  and not (pendBuyWk[1]  == true),  "Pending Buy (Wk)", 
 alertcondition(pendSellWk and not (pendSellWk[1] == true), "Pending Sell (Wk)", "Pending SELL zone — Weekly VAH {{close}}")
 alertcondition(pendBuyMo  and not (pendBuyMo[1]  == true),  "Pending Buy (Mo)",  "Pending BUY zone — Monthly VAL {{close}}")
 alertcondition(pendSellMo and not (pendSellMo[1] == true), "Pending Sell (Mo)", "Pending SELL zone — Monthly VAH {{close}}")
+alertcondition(pendBuyUnt  and not (pendBuyUnt[1]  == true),  "Pending Buy (Unt)",  "Pending BUY zone — Untested VAL {{close}}")
+alertcondition(pendSellUnt and not (pendSellUnt[1] == true), "Pending Sell (Unt)", "Pending SELL zone — Untested VAH {{close}}")
 alertcondition(regime == "TRANSITION" and (na(regime[1]) or regime[1] != "TRANSITION"), "Regime Transition", "VETO: Market entered TRANSITION regime — no new entries")
 alertcondition(not na(activeSL) and ((activeIsBuy and low <= activeSL) or (not activeIsBuy and high >= activeSL)), "Stop Hit", "Stop loss hit — exit position")
