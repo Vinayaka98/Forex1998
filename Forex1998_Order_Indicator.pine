@@ -421,6 +421,23 @@ float nearestSup = math.min(math.min(distWkVAL, distMoVAL), distUntSup)
 float nearestRes = math.min(math.min(distWkVAH, distMoVAH), distUntRes)
 float nearestVP  = math.min(math.min(distWkVAL, distWkVAH), math.min(distMoVAL, distMoVAH))
 
+// ── VP Confluence (weekly + monthly levels align) ──
+bool vpConfBuy  = (nearWkVAL and nearMoVAL) or (nearWkVAL and nearMoPOC) or (nearWkPOC and nearMoVAL)
+bool vpConfSell = (nearWkVAH and nearMoVAH) or (nearWkVAH and nearMoPOC) or (nearWkPOC and nearMoVAH)
+
+// ── Candle Pattern Detection ──
+float bodySize = math.abs(close - open)
+float upperWick = high - math.max(open, close)
+float lowerWick = math.min(open, close) - low
+float candleRange = high - low
+bool bullEngulf = close > open and close[1] < open[1] and close >= open[1] and open <= close[1] and bodySize > bodySize[1]
+bool hammer = close > open and candleRange > 0 and lowerWick > bodySize * 2.0 and upperWick < bodySize * 0.5
+bool bullPin = candleRange > 0 and lowerWick > candleRange * 0.6 and bodySize < candleRange * 0.3
+bool bearEngulf = close < open and close[1] > open[1] and close <= open[1] and open >= close[1] and bodySize > bodySize[1]
+bool bearPin = candleRange > 0 and upperWick > candleRange * 0.6 and bodySize < candleRange * 0.3
+bool bullPattern = bullEngulf or hammer or bullPin
+bool bearPattern = bearEngulf or bearPin
+
 // ══════════════════════════════════════════════════════════
 //  WEIGHTED QUALITY SCORE (Blueprint Section 8.1)
 //  Regime 25, HT Direction 20, VP Location 20,
@@ -493,10 +510,14 @@ bool momBullish = scoreMA3 > scoreMA6 or score > 0.1
 bool momBearish = scoreMA3 < scoreMA6 or score < -0.1
 bool v11_buy_classic = oscOversold and (nearSup or nearPOC) and momBullish and regime != "BEAR"
 bool v11_buy_poc = nearPOC and score > 0.1 and close > open and regime != "BEAR"
-bool v11_buy  = v11_buy_classic or v11_buy_poc
+bool v11_buy_pattern = bullPattern and (nearSup or nearPOC) and score > -0.1 and regime != "BEAR"
+bool v11_buy_confluence = vpConfBuy and close > open and momBullish and regime != "BEAR"
+bool v11_buy  = v11_buy_classic or v11_buy_poc or v11_buy_pattern or v11_buy_confluence
 bool v11_sell_classic = oscOverbought and (nearRes or nearPOC) and momBearish and regime != "BULL"
 bool v11_sell_poc = not buyOnly and nearPOC and score < -0.1 and close < open and regime != "BULL"
-bool v11_sell = v11_sell_classic or v11_sell_poc
+bool v11_sell_pattern = not buyOnly and bearPattern and (nearRes or nearPOC) and score < 0.1 and regime != "BULL"
+bool v11_sell_confluence = not buyOnly and vpConfSell and close < open and momBearish and regime != "BULL"
+bool v11_sell = v11_sell_classic or v11_sell_poc or v11_sell_pattern or v11_sell_confluence
 
 // ── Select active strategy ──
 bool rawBuy  = false
@@ -554,12 +575,17 @@ bool vetoBuyOnly = buyOnly and rawSell
 if vetoBuyOnly
     vetoed := true
 
-// ── Quality Gate ──
+// ── Quality Gate (lowered for high-confluence or pattern entries) ──
 float qualBuy  = rawBuy  ? qualityCalc("BUY", regime, nearestSup) : 0.0
 float qualSell = rawSell ? qualityCalc("SELL", regime, nearestRes) : 0.0
 
-bool qualPassBuy  = qualBuy >= minQuality
-bool qualPassSell = qualSell >= minQuality
+int confBuyBonus  = (bullPattern ? 1 : 0) + (vpConfBuy ? 1 : 0) + (oscOversold ? 1 : 0)
+int confSellBonus = (bearPattern ? 1 : 0) + (vpConfSell ? 1 : 0) + (oscOverbought ? 1 : 0)
+float adjMinQualBuy  = confBuyBonus >= 2 ? minQuality - 15 : confBuyBonus >= 1 ? minQuality - 10 : minQuality
+float adjMinQualSell = confSellBonus >= 2 ? minQuality - 15 : confSellBonus >= 1 ? minQuality - 10 : minQuality
+
+bool qualPassBuy  = qualBuy >= adjMinQualBuy
+bool qualPassSell = qualSell >= adjMinQualSell
 
 // ── R:R Gate (Blueprint S9.1) ──
 float buyTarget  = na
@@ -772,6 +798,27 @@ plot(showMo ? moPOC : na, "Mo POC", color.new(#FF9800, 0), 2, plot.style_steplin
 plot(showMo ? moVAH : na, "Mo VAH", color.new(#EF5350, 0), 2, plot.style_stepline)
 plot(showMo ? moVAL : na, "Mo VAL", color.new(#26A69A, 0), 2, plot.style_stepline)
 
+// ── Buy/Sell Zone Highlights (shaded VP proximity zones) ──
+var box zBuyMo  = na
+var box zSellMo = na
+var box zBuyWk  = na
+var box zSellWk = na
+
+if barstate.islast and showVP
+    box.delete(zBuyMo)
+    box.delete(zSellMo)
+    box.delete(zBuyWk)
+    box.delete(zSellWk)
+    float zoneATR = atrV * proxATR
+    if showMo and not na(moVAL)
+        zBuyMo := box.new(bar_index - 40, moVAL + zoneATR, bar_index + 2, moVAL - zoneATR, border_color=color.new(#00E676, 80), bgcolor=color.new(#00E676, 92))
+    if showMo and not na(moVAH) and not buyOnly
+        zSellMo := box.new(bar_index - 40, moVAH + zoneATR, bar_index + 2, moVAH - zoneATR, border_color=color.new(#FF1744, 80), bgcolor=color.new(#FF1744, 92))
+    if showWk and not na(wkVAL)
+        zBuyWk := box.new(bar_index - 40, wkVAL + zoneATR * 0.7, bar_index + 2, wkVAL - zoneATR * 0.7, border_color=color.new(#26A69A, 80), bgcolor=color.new(#26A69A, 93))
+    if showWk and not na(wkVAH) and not buyOnly
+        zSellWk := box.new(bar_index - 40, wkVAH + zoneATR * 0.7, bar_index + 2, wkVAH - zoneATR * 0.7, border_color=color.new(#EF5350, 80), bgcolor=color.new(#EF5350, 93))
+
 // Market signals with entry price, SL, TP, R:R label
 if buyTrig
     label.new(bar_index, low, "BUY @ " + str.tostring(close, format.mintick) + "\nSL " + str.tostring(buySL, format.mintick) + " | TP " + str.tostring(buyTarget, format.mintick) + "\nR:R " + str.tostring(rrBuy, "#.#"), xloc.bar_index, yloc.price, color.new(#00E676, 0), label.style_label_up, color.white, size.normal)
@@ -939,9 +986,10 @@ if showTbl and barstate.islast and not na(tbl)
     float activeQual = buyTrig ? qualBuy : sellTrig ? qualSell : math.max(qualityCalc("BUY", regime, nearestSup), qualityCalc("SELL", regime, nearestRes))
     color qCol = activeQual >= 75 ? color.new(#00E676, 0) : activeQual >= 65 ? color.new(#26A69A, 0) : activeQual >= 50 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
     table.cell(tbl, 0, 5, "Quality", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    float activeAdjMin = buyTrig or nearSup ? adjMinQualBuy : sellTrig or nearRes ? adjMinQualSell : minQuality
     table.cell(tbl, 1, 5, str.tostring(activeQual, "#") + "/100", text_color=qCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 5, "Min:" + str.tostring(minQuality), text_color=mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 5, activeQual >= minQuality ? "PASS" : "FAIL", text_color=activeQual >= minQuality ? color.new(#00E676, 0) : color.new(#FF1744, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 2, 5, "Min:" + str.tostring(activeAdjMin, "#") + (activeAdjMin < minQuality ? "*" : ""), text_color=activeAdjMin < minQuality ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 5, activeQual >= activeAdjMin ? "PASS" : "FAIL", text_color=activeQual >= activeAdjMin ? color.new(#00E676, 0) : color.new(#FF1744, 0), text_size=size.small, text_halign=text.align_left)
     table.cell(tbl, 4, 5, "", text_size=size.small)
 
     // Row 6 — R:R
@@ -964,10 +1012,16 @@ if showTbl and barstate.islast and not na(tbl)
         v11Status += "SUP "
     if nearRes
         v11Status += "RES "
+    if nearPOC
+        v11Status += "POC "
     if momBullish
         v11Status += "M+ "
     if momBearish
         v11Status += "M- "
+    if bullPattern
+        v11Status += "PAT "
+    if vpConfBuy or vpConfSell
+        v11Status += "CONF "
     if v11Status == ""
         v11Status := "---"
     table.cell(tbl, 1, 7, v11Status, text_color=v11_buy or v11_sell ? (v11_buy ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
