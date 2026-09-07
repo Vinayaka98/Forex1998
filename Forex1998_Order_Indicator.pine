@@ -768,10 +768,90 @@ if not na(activeEntry)
 
 // ── Pending Orders (BUY only) ──
 bool oscApproachOS = rsiV < 45 or rawK < 35 or wrV < -55
+float riskAmt = accSize * riskPct / 100.0
 
-bool pendBuyWk  = not na(wkVAL) and distWkVAL > proxATR and distWkVAL < proxATR * pendRange and oscApproachOS and regime != "BEAR"
-bool pendBuyMo  = not na(moVAL) and distMoVAL > proxATR and distMoVAL < proxATR * pendRange and oscApproachOS and regime != "BEAR"
-bool pendBuyUnt = not na(nearUntSupPrice) and distUntSup > proxATR and distUntSup < proxATR * pendRange and oscApproachOS and regime != "BEAR"
+bool pendBuyWk  = not na(wkVAL) and close > wkVAL and distWkVAL > proxATR and distWkVAL < proxATR * pendRange and oscApproachOS and regime != "BEAR"
+bool pendBuyMo  = not na(moVAL) and close > moVAL and distMoVAL > proxATR and distMoVAL < proxATR * pendRange and oscApproachOS and regime != "BEAR"
+bool pendBuyUnt = not na(nearUntSupPrice) and close > nearUntSupPrice and distUntSup > proxATR and distUntSup < proxATR * pendRange and oscApproachOS and regime != "BEAR"
+
+// Pending order details + R:R gate (only show viable trades)
+float pendWkSL = na
+float pendWkTP = na
+float pendWkRR = na
+float pendWkLots = na
+float pendWkPipsAway = na
+if pendBuyWk and not na(wkVAL) and atrV > 0
+    pendWkPipsAway := (close - wkVAL) / syminfo.mintick
+    float pSD = math.max(atrV * minStopATR, wkVAL - swingLow20 + atrV * atrBuf)
+    pendWkSL := wkVAL - pSD
+    if not na(wkVAH) and wkVAH > wkVAL
+        pendWkTP := wkVAH
+    else if not na(moVAH) and moVAH > wkVAL
+        pendWkTP := moVAH
+    else
+        pendWkTP := wkVAL + pSD * rrMin
+    pendWkRR := pSD > 0 ? (pendWkTP - wkVAL) / pSD : 0.0
+    float pPips = pSD / syminfo.mintick
+    pendWkLots := pPips > 0 ? math.floor(riskAmt / (pPips * 0.10)) / 100.0 : 0.0
+    if pendWkRR < rrMin
+        pendBuyWk := false
+        pendWkSL := na
+        pendWkTP := na
+        pendWkRR := na
+        pendWkLots := na
+        pendWkPipsAway := na
+
+float pendMoSL = na
+float pendMoTP = na
+float pendMoRR = na
+float pendMoLots = na
+float pendMoPipsAway = na
+if pendBuyMo and not na(moVAL) and atrV > 0
+    pendMoPipsAway := (close - moVAL) / syminfo.mintick
+    float pSD = math.max(atrV * minStopATR, moVAL - swingLow20 + atrV * atrBuf)
+    pendMoSL := moVAL - pSD
+    if not na(moVAH) and moVAH > moVAL
+        pendMoTP := moVAH
+    else if not na(wkVAH) and wkVAH > moVAL
+        pendMoTP := wkVAH
+    else
+        pendMoTP := moVAL + pSD * rrMin
+    pendMoRR := pSD > 0 ? (pendMoTP - moVAL) / pSD : 0.0
+    float pPips = pSD / syminfo.mintick
+    pendMoLots := pPips > 0 ? math.floor(riskAmt / (pPips * 0.10)) / 100.0 : 0.0
+    if pendMoRR < rrMin
+        pendBuyMo := false
+        pendMoSL := na
+        pendMoTP := na
+        pendMoRR := na
+        pendMoLots := na
+        pendMoPipsAway := na
+
+float pendUntSL = na
+float pendUntTP = na
+float pendUntRR = na
+float pendUntLots = na
+float pendUntPipsAway = na
+if pendBuyUnt and not na(nearUntSupPrice) and atrV > 0
+    pendUntPipsAway := (close - nearUntSupPrice) / syminfo.mintick
+    float pSD = math.max(atrV * minStopATR, nearUntSupPrice - swingLow20 + atrV * atrBuf)
+    pendUntSL := nearUntSupPrice - pSD
+    if not na(moVAH) and moVAH > nearUntSupPrice
+        pendUntTP := moVAH
+    else if not na(wkVAH) and wkVAH > nearUntSupPrice
+        pendUntTP := wkVAH
+    else
+        pendUntTP := nearUntSupPrice + pSD * rrMin
+    pendUntRR := pSD > 0 ? (pendUntTP - nearUntSupPrice) / pSD : 0.0
+    float pPips = pSD / syminfo.mintick
+    pendUntLots := pPips > 0 ? math.floor(riskAmt / (pPips * 0.10)) / 100.0 : 0.0
+    if pendUntRR < rrMin
+        pendBuyUnt := false
+        pendUntSL := na
+        pendUntTP := na
+        pendUntRR := na
+        pendUntLots := na
+        pendUntPipsAway := na
 
 int pendCount = (pendBuyWk ? 1 : 0) + (pendBuyMo ? 1 : 0) + (pendBuyUnt ? 1 : 0)
 bool hasPending = pendCount > 0
@@ -817,18 +897,24 @@ else if hasPending
     dispType := "LIMIT"
     if pendBuyMo
         dispEntry := moVAL
+        dispSL := pendMoSL
+        dispTP := pendMoTP
+        dispRR := nz(pendMoRR, 0)
     else if pendBuyWk
         dispEntry := wkVAL
+        dispSL := pendWkSL
+        dispTP := pendWkTP
+        dispRR := nz(pendWkRR, 0)
     else if pendBuyUnt
         dispEntry := nearUntSupPrice
-    if not na(dispEntry) and atrV > 0
-        float pSD = math.max(atrV * minStopATR, dispEntry - swingLow20 + atrV * atrBuf)
-        dispSL := dispEntry - pSD
-        dispTP := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : dispEntry + pSD * rrMin
+        dispSL := pendUntSL
+        dispTP := pendUntTP
+        dispRR := nz(pendUntRR, 0)
+    if not na(dispEntry) and not na(dispSL)
+        float pSD = math.abs(dispEntry - nz(dispSL, dispEntry))
         dispTP1d := dispEntry + pSD
         dispTP2d := dispEntry + pSD * 2.0
         dispTP3d := dispTP
-        dispRR := pSD > 0 ? (dispTP - dispEntry) / pSD : 0.0
 else if hasActiveTrade
     dispType := "ACTIVE"
     dispEntry := activeEntryPrice
@@ -846,49 +932,8 @@ color dispTypeCol = dispType == "MARKET" ? color.new(#00E676, 0) : dispType == "
 
 // ── Position Sizing ──
 float stopPips = not na(dispSL) and not na(dispEntry) ? math.abs(dispEntry - dispSL) / syminfo.mintick : 0.0
-float riskAmt = accSize * riskPct / 100.0
 float microLots = stopPips > 0 ? math.floor(riskAmt / (stopPips * 0.10)) : 0.0
 float stdLots = microLots / 100.0
-
-// ── Pending Order Details (full SL/TP/size per level) ──
-float pendWkSL = na
-float pendWkTP = na
-float pendWkRR = na
-float pendWkLots = na
-float pendWkPipsAway = pendBuyWk and not na(wkVAL) ? (close - wkVAL) / syminfo.mintick : na
-if pendBuyWk and not na(wkVAL) and atrV > 0
-    float pSD = math.max(atrV * minStopATR, wkVAL - swingLow20 + atrV * atrBuf)
-    pendWkSL := wkVAL - pSD
-    pendWkTP := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : wkVAL + pSD * rrMin
-    pendWkRR := pSD > 0 ? (pendWkTP - wkVAL) / pSD : 0.0
-    float pPips = pSD / syminfo.mintick
-    pendWkLots := pPips > 0 ? math.floor(riskAmt / (pPips * 0.10)) / 100.0 : 0.0
-
-float pendMoSL = na
-float pendMoTP = na
-float pendMoRR = na
-float pendMoLots = na
-float pendMoPipsAway = pendBuyMo and not na(moVAL) ? (close - moVAL) / syminfo.mintick : na
-if pendBuyMo and not na(moVAL) and atrV > 0
-    float pSD = math.max(atrV * minStopATR, moVAL - swingLow20 + atrV * atrBuf)
-    pendMoSL := moVAL - pSD
-    pendMoTP := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : moVAL + pSD * rrMin
-    pendMoRR := pSD > 0 ? (pendMoTP - moVAL) / pSD : 0.0
-    float pPips = pSD / syminfo.mintick
-    pendMoLots := pPips > 0 ? math.floor(riskAmt / (pPips * 0.10)) / 100.0 : 0.0
-
-float pendUntSL = na
-float pendUntTP = na
-float pendUntRR = na
-float pendUntLots = na
-float pendUntPipsAway = pendBuyUnt and not na(nearUntSupPrice) ? (close - nearUntSupPrice) / syminfo.mintick : na
-if pendBuyUnt and not na(nearUntSupPrice) and atrV > 0
-    float pSD = math.max(atrV * minStopATR, nearUntSupPrice - swingLow20 + atrV * atrBuf)
-    pendUntSL := nearUntSupPrice - pSD
-    pendUntTP := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : nearUntSupPrice + pSD * rrMin
-    pendUntRR := pSD > 0 ? (pendUntTP - nearUntSupPrice) / pSD : 0.0
-    float pPips = pSD / syminfo.mintick
-    pendUntLots := pPips > 0 ? math.floor(riskAmt / (pPips * 0.10)) / 100.0 : 0.0
 
 // ══════════════════════════════════════════════════════════
 //  PLOTS
