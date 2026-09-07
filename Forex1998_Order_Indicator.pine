@@ -30,6 +30,7 @@ g2b     = "Exit Settings"
 exitMode = input.string("Adaptive_Trail", "Exit Model", options=["Adaptive_Trail", "R2_Target", "R1.5_Target", "Struct_Trail", "Struct_Trail_BE", "Time_15bar", "Time_20bar"], group=g2b, tooltip="Adaptive_Trail (V3 default): Chandelier trailing after 0.5R profit, break-even at 1R, tight trail at 2R. Maximizes winning runs while locking in profit.")
 holdBars = input.int(20, "Time Exit Bars", minval=5, maxval=50, group=g2b)
 adaptMaxBars = input.int(30, "Adaptive Max Hold", minval=10, maxval=60, group=g2b, tooltip="Max bars for Adaptive_Trail before forced time exit. Longer hold allows trail to capture extended moves.")
+sigExpiry = input.int(3, "Signal Expiry (bars)", minval=1, maxval=10, group=g2b, tooltip="Auto-clear active trade display after this many bars if price hasn't moved past break-even. Frees the dashboard to show new opportunities.")
 
 // ── Session Filter ──
 g_sess  = "Session Filter"
@@ -688,57 +689,9 @@ bool timeExit = false
 if not na(activeEntry)
     int barsHeld = bar_index - activeEntry
 
-    // Time exit logic
-    if exitMode == "Time_15bar" and barsHeld >= 15
-        timeExit := true
-    else if exitMode == "Time_20bar" and barsHeld >= holdBars
-        timeExit := true
-    else if exitMode == "Adaptive_Trail" and barsHeld >= adaptMaxBars
-        timeExit := true
-    else if (exitMode == "Struct_Trail" or exitMode == "Struct_Trail_BE" or exitMode == "R2_Target" or exitMode == "R1.5_Target") and barsHeld >= holdBars
-        timeExit := true
-
-    // Adaptive Trail exit engine (BUY long only)
-    if exitMode == "Adaptive_Trail" and not na(origStopDist) and origStopDist > 0
-        trailHighest := math.max(nz(trailHighest, high), high)
-        float profitR = (high - activeEntryPrice) / origStopDist
-        if profitR >= 1.0
-            tp1Hit := true
-        if profitR >= 0.5
-            float chandSL = trailHighest - atrV * 1.5
-            if chandSL > activeSL
-                activeSL := chandSL
-        if profitR >= 1.0 and activeSL < activeEntryPrice
-            activeSL := activeEntryPrice + atrV * 0.05
-        if profitR >= 2.0
-            float tightSL = trailHighest - atrV * 0.8
-            if tightSL > activeSL
-                activeSL := tightSL
-
-    // Struct_Trail / Struct_Trail_BE (BUY long only)
-    else if (exitMode == "Struct_Trail" or exitMode == "Struct_Trail_BE") and not na(activeSL)
-        float newSL = low - atrV * 0.3
-        if newSL > activeSL
-            activeSL := newSL
-        if exitMode == "Struct_Trail_BE" and not na(activeEntryPrice) and (high - activeEntryPrice) > buyStopDist * 0.5
-            if activeSL < activeEntryPrice
-                activeSL := activeEntryPrice + atrV * 0.05
-
-    // Exit detection (BUY long: SL hit below, TP hit above)
-    bool shouldExit = low <= activeSL or high >= activeTP or timeExit
-
-    if shouldExit
-        float exitPnl = 0.0
-        if low <= activeSL
-            exitPnl := activeSL - activeEntryPrice
-        else if high >= activeTP
-            exitPnl := activeTP - activeEntryPrice
-        else
-            exitPnl := close - activeEntryPrice
-        if exitPnl > 0
-            winCount += 1
-        else
-            lossCount += 1
+    // Signal expiry: auto-clear stale trades the user likely never entered
+    bool sigExpired = barsHeld >= sigExpiry and not na(origStopDist) and nz(trailHighest, high) <= activeEntryPrice + nz(origStopDist, 1) * 0.25
+    if sigExpired
         activeSL         := na
         activeTP         := na
         activeTP1        := na
@@ -749,6 +702,69 @@ if not na(activeEntry)
         origStopDist     := na
         trailHighest     := na
         tp1Hit           := false
+
+    if not sigExpired
+        // Time exit logic
+        if exitMode == "Time_15bar" and barsHeld >= 15
+            timeExit := true
+        else if exitMode == "Time_20bar" and barsHeld >= holdBars
+            timeExit := true
+        else if exitMode == "Adaptive_Trail" and barsHeld >= adaptMaxBars
+            timeExit := true
+        else if (exitMode == "Struct_Trail" or exitMode == "Struct_Trail_BE" or exitMode == "R2_Target" or exitMode == "R1.5_Target") and barsHeld >= holdBars
+            timeExit := true
+
+        // Adaptive Trail exit engine (BUY long only)
+        if exitMode == "Adaptive_Trail" and not na(origStopDist) and origStopDist > 0
+            trailHighest := math.max(nz(trailHighest, high), high)
+            float profitR = (high - activeEntryPrice) / origStopDist
+            if profitR >= 1.0
+                tp1Hit := true
+            if profitR >= 0.5
+                float chandSL = trailHighest - atrV * 1.5
+                if chandSL > activeSL
+                    activeSL := chandSL
+            if profitR >= 1.0 and activeSL < activeEntryPrice
+                activeSL := activeEntryPrice + atrV * 0.05
+            if profitR >= 2.0
+                float tightSL = trailHighest - atrV * 0.8
+                if tightSL > activeSL
+                    activeSL := tightSL
+
+        // Struct_Trail / Struct_Trail_BE (BUY long only)
+        else if (exitMode == "Struct_Trail" or exitMode == "Struct_Trail_BE") and not na(activeSL)
+            float newSL = low - atrV * 0.3
+            if newSL > activeSL
+                activeSL := newSL
+            if exitMode == "Struct_Trail_BE" and not na(activeEntryPrice) and (high - activeEntryPrice) > buyStopDist * 0.5
+                if activeSL < activeEntryPrice
+                    activeSL := activeEntryPrice + atrV * 0.05
+
+        // Exit detection (BUY long: SL hit below, TP hit above)
+        bool shouldExit = low <= activeSL or high >= activeTP or timeExit
+
+        if shouldExit
+            float exitPnl = 0.0
+            if low <= activeSL
+                exitPnl := activeSL - activeEntryPrice
+            else if high >= activeTP
+                exitPnl := activeTP - activeEntryPrice
+            else
+                exitPnl := close - activeEntryPrice
+            if exitPnl > 0
+                winCount += 1
+            else
+                lossCount += 1
+            activeSL         := na
+            activeTP         := na
+            activeTP1        := na
+            activeTP2        := na
+            activeTP3        := na
+            activeEntry      := na
+            activeEntryPrice := na
+            origStopDist     := na
+            trailHighest     := na
+            tp1Hit           := false
 
 // ── Pending Orders (BUY only) ──
 bool oscApproachOS = rsiV < 45 or rawK < 35 or wrV < -55
