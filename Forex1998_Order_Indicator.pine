@@ -773,25 +773,25 @@ bool pendBuyWk  = not na(wkVAL) and distWkVAL > proxATR and distWkVAL < proxATR 
 bool pendBuyMo  = not na(moVAL) and distMoVAL > proxATR and distMoVAL < proxATR * pendRange and oscApproachOS and regime != "BEAR"
 bool pendBuyUnt = not na(nearUntSupPrice) and distUntSup > proxATR and distUntSup < proxATR * pendRange and oscApproachOS and regime != "BEAR"
 
+int pendCount = (pendBuyWk ? 1 : 0) + (pendBuyMo ? 1 : 0) + (pendBuyUnt ? 1 : 0)
+bool hasPending = pendCount > 0
+
 // ── Signal Text ──
 string sigText = "WAIT"
 color  sigCol  = color.gray
 
 if buyTrig
-    sigText := "BUY [" + buyGrade + "] Q:" + str.tostring(qualBuy, "#") + " R:" + str.tostring(rrBuy, "#.#")
+    sigText := "MKT BUY [" + buyGrade + "] Q:" + str.tostring(qualBuy, "#") + " R:" + str.tostring(rrBuy, "#.#")
     sigCol  := gradeCol(buyGrade)
-else if pendBuyMo
-    sigText := "PEND BUY @ " + str.tostring(moVAL, format.mintick)
-    sigCol  := color.new(#2979FF, 0)
-else if pendBuyWk
-    sigText := "PEND BUY @ " + str.tostring(wkVAL, format.mintick)
-    sigCol  := color.new(#2979FF, 0)
-else if pendBuyUnt
-    sigText := "PEND BUY @ " + str.tostring(nearUntSupPrice, format.mintick) + " (Unt)"
+    if hasPending
+        sigText += " +" + str.tostring(pendCount) + "P"
+else if hasPending
+    string bestPend = pendBuyMo ? str.tostring(moVAL, format.mintick) : pendBuyWk ? str.tostring(wkVAL, format.mintick) : str.tostring(nearUntSupPrice, format.mintick)
+    string pendLabel = pendBuyMo ? "Mo" : pendBuyWk ? "Wk" : "Unt"
+    sigText := pendCount > 1 ? str.tostring(pendCount) + " LIMIT BUYS" : "LIMIT BUY @ " + bestPend + " (" + pendLabel + ")"
     sigCol  := color.new(#2979FF, 0)
 
 // ── Order details for dashboard ──
-bool hasPending = pendBuyWk or pendBuyMo or pendBuyUnt
 bool hasMarket = buyTrig
 bool hasActiveTrade = not na(activeSL)
 
@@ -814,7 +814,7 @@ if hasMarket
     dispTP3d := buyTP3
     dispRR  := rrBuy
 else if hasPending
-    dispType := "PENDING"
+    dispType := "LIMIT"
     if pendBuyMo
         dispEntry := moVAL
     else if pendBuyWk
@@ -842,13 +842,53 @@ else if hasActiveTrade
         float tDist = not na(dispTP) ? math.abs(dispTP - dispEntry) : 0.0
         dispRR := sDist > 0 ? tDist / sDist : 0.0
 
-color dispTypeCol = dispType == "MARKET" ? color.new(#00E676, 0) : dispType == "PENDING" ? color.new(#2979FF, 0) : dispType == "ACTIVE" ? color.new(#FFC107, 0) : color.gray
+color dispTypeCol = dispType == "MARKET" ? color.new(#00E676, 0) : dispType == "LIMIT" ? color.new(#2979FF, 0) : dispType == "ACTIVE" ? color.new(#FFC107, 0) : color.gray
 
 // ── Position Sizing ──
 float stopPips = not na(dispSL) and not na(dispEntry) ? math.abs(dispEntry - dispSL) / syminfo.mintick : 0.0
 float riskAmt = accSize * riskPct / 100.0
 float microLots = stopPips > 0 ? math.floor(riskAmt / (stopPips * 0.10)) : 0.0
 float stdLots = microLots / 100.0
+
+// ── Pending Order Details (full SL/TP/size per level) ──
+float pendWkSL = na
+float pendWkTP = na
+float pendWkRR = na
+float pendWkLots = na
+float pendWkPipsAway = pendBuyWk and not na(wkVAL) ? (close - wkVAL) / syminfo.mintick : na
+if pendBuyWk and not na(wkVAL) and atrV > 0
+    float pSD = math.max(atrV * minStopATR, wkVAL - swingLow20 + atrV * atrBuf)
+    pendWkSL := wkVAL - pSD
+    pendWkTP := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : wkVAL + pSD * rrMin
+    pendWkRR := pSD > 0 ? (pendWkTP - wkVAL) / pSD : 0.0
+    float pPips = pSD / syminfo.mintick
+    pendWkLots := pPips > 0 ? math.floor(riskAmt / (pPips * 0.10)) / 100.0 : 0.0
+
+float pendMoSL = na
+float pendMoTP = na
+float pendMoRR = na
+float pendMoLots = na
+float pendMoPipsAway = pendBuyMo and not na(moVAL) ? (close - moVAL) / syminfo.mintick : na
+if pendBuyMo and not na(moVAL) and atrV > 0
+    float pSD = math.max(atrV * minStopATR, moVAL - swingLow20 + atrV * atrBuf)
+    pendMoSL := moVAL - pSD
+    pendMoTP := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : moVAL + pSD * rrMin
+    pendMoRR := pSD > 0 ? (pendMoTP - moVAL) / pSD : 0.0
+    float pPips = pSD / syminfo.mintick
+    pendMoLots := pPips > 0 ? math.floor(riskAmt / (pPips * 0.10)) / 100.0 : 0.0
+
+float pendUntSL = na
+float pendUntTP = na
+float pendUntRR = na
+float pendUntLots = na
+float pendUntPipsAway = pendBuyUnt and not na(nearUntSupPrice) ? (close - nearUntSupPrice) / syminfo.mintick : na
+if pendBuyUnt and not na(nearUntSupPrice) and atrV > 0
+    float pSD = math.max(atrV * minStopATR, nearUntSupPrice - swingLow20 + atrV * atrBuf)
+    pendUntSL := nearUntSupPrice - pSD
+    pendUntTP := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : nearUntSupPrice + pSD * rrMin
+    pendUntRR := pSD > 0 ? (pendUntTP - nearUntSupPrice) / pSD : 0.0
+    float pPips = pSD / syminfo.mintick
+    pendUntLots := pPips > 0 ? math.floor(riskAmt / (pPips * 0.10)) / 100.0 : 0.0
 
 // ══════════════════════════════════════════════════════════
 //  PLOTS
@@ -991,7 +1031,7 @@ if barstate.islast and showVP
 
 tablePosition = tblPos == "Top Left" ? position.top_left : tblPos == "Bottom Right" ? position.bottom_right : tblPos == "Bottom Left" ? position.bottom_left : position.top_right
 
-var table tbl = showTbl ? table.new(tablePosition, 5, 28, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
+var table tbl = showTbl ? table.new(tablePosition, 5, 33, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
 
 if showTbl and barstate.islast and not na(tbl)
     hBg = color.new(#161b22, 0)
@@ -1219,17 +1259,57 @@ if showTbl and barstate.islast and not na(tbl)
     table.cell(tbl, 3, 27, array.size(untVAL) > 0 ? str.tostring(array.size(untVAL)) + " lvl" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 4, 27, "", text_size=size.small)
 
+    // Row 28 — spacer
+    for c = 0 to 4
+        table.cell(tbl, c, 28, "", text_size=size.tiny)
+
+    // Row 29 — Pending Orders Header
+    color pendHdrCol = hasPending ? color.new(#2979FF, 0) : color.new(#30363d, 0)
+    table.cell(tbl, 0, 29, "LIMIT BUYS", text_color=hasPending ? hFg : color.new(#30363d, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 29, hasPending ? str.tostring(pendCount) + " pending" : "", text_color=pendHdrCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 2, 29, "Entry", text_color=hasPending ? mFg : color.new(#30363d, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 3, 29, "SL / Lots", text_color=hasPending ? mFg : color.new(#30363d, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 4, 29, "Away", text_color=hasPending ? mFg : color.new(#30363d, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+
+    // Row 30 — Wk VAL Pending
+    table.cell(tbl, 0, 30, "Wk VAL", text_color=pendBuyWk ? color.new(#26A69A, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 30, pendBuyWk ? "BUY LIMIT" : "", text_color=pendBuyWk ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 30, pendBuyWk and not na(wkVAL) ? str.tostring(wkVAL, format.mintick) : "", text_color=pendBuyWk ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 30, pendBuyWk and not na(pendWkSL) ? str.tostring(pendWkSL, format.mintick) + " / " + str.tostring(nz(pendWkLots, 0), "#.##") + "L" : "", text_color=pendBuyWk ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 4, 30, pendBuyWk and not na(pendWkPipsAway) ? str.tostring(pendWkPipsAway, "#") + "p" : "", text_color=pendBuyWk ? dFg : mFg, text_size=size.small, text_halign=text.align_center)
+
+    // Row 31 — Mo VAL Pending
+    table.cell(tbl, 0, 31, "Mo VAL", text_color=pendBuyMo ? color.new(#26A69A, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 31, pendBuyMo ? "BUY LIMIT" : "", text_color=pendBuyMo ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 31, pendBuyMo and not na(moVAL) ? str.tostring(moVAL, format.mintick) : "", text_color=pendBuyMo ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 31, pendBuyMo and not na(pendMoSL) ? str.tostring(pendMoSL, format.mintick) + " / " + str.tostring(nz(pendMoLots, 0), "#.##") + "L" : "", text_color=pendBuyMo ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 4, 31, pendBuyMo and not na(pendMoPipsAway) ? str.tostring(pendMoPipsAway, "#") + "p" : "", text_color=pendBuyMo ? dFg : mFg, text_size=size.small, text_halign=text.align_center)
+
+    // Row 32 — Untested Pending
+    table.cell(tbl, 0, 32, "Unt Sup", text_color=pendBuyUnt ? color.new(#26A69A, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 32, pendBuyUnt ? "BUY LIMIT" : "", text_color=pendBuyUnt ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 32, pendBuyUnt and not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "", text_color=pendBuyUnt ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 3, 32, pendBuyUnt and not na(pendUntSL) ? str.tostring(pendUntSL, format.mintick) + " / " + str.tostring(nz(pendUntLots, 0), "#.##") + "L" : "", text_color=pendBuyUnt ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 4, 32, pendBuyUnt and not na(pendUntPipsAway) ? str.tostring(pendUntPipsAway, "#") + "p" : "", text_color=pendBuyUnt ? dFg : mFg, text_size=size.small, text_halign=text.align_center)
+
 // ══════════════════════════════════════════════════════════
 //  ALERTS (BUY only — rich dynamic messages)
 // ══════════════════════════════════════════════════════════
 
 if buyTrig
-    alert("F98 V3 BUY [" + buyGrade + "] @ " + str.tostring(close, format.mintick) + " | SL " + str.tostring(buySL, format.mintick) + " | TP1 " + str.tostring(buyTP1, format.mintick) + " | TP2 " + str.tostring(buyTP2, format.mintick) + " | TP3 " + str.tostring(buyTP3, format.mintick) + " | R:R " + str.tostring(rrBuy, "#.#") + " | Q:" + str.tostring(qualBuy, "#") + " | Conf:" + str.tostring(buyConfCount) + "/8 | " + regime + " | Size: " + str.tostring(stdLots, "#.##") + " lots", alert.freq_once_per_bar_close)
+    alert("F98 MKT BUY [" + buyGrade + "] @ " + str.tostring(close, format.mintick) + " | SL " + str.tostring(buySL, format.mintick) + " | TP1 " + str.tostring(buyTP1, format.mintick) + " | TP2 " + str.tostring(buyTP2, format.mintick) + " | TP3 " + str.tostring(buyTP3, format.mintick) + " | R:R " + str.tostring(rrBuy, "#.#") + " | Q:" + str.tostring(qualBuy, "#") + " | Conf:" + str.tostring(buyConfCount) + "/8 | " + regime + " | Size: " + str.tostring(stdLots, "#.##") + " lots", alert.freq_once_per_bar_close)
 
-alertcondition(buyTrig, "Market Buy", "F98 V3 BUY — Quality + R:R passed")
-alertcondition(pendBuyWk and not (pendBuyWk[1] == true), "Pending Buy (Wk)", "Pending BUY zone — Weekly VAL {{close}}")
-alertcondition(pendBuyMo and not (pendBuyMo[1] == true), "Pending Buy (Mo)", "Pending BUY zone — Monthly VAL {{close}}")
-alertcondition(pendBuyUnt and not (pendBuyUnt[1] == true), "Pending Buy (Unt)", "Pending BUY zone — Untested VAL {{close}}")
+if pendBuyWk and not nz(pendBuyWk[1], false) and not na(pendWkSL)
+    alert("F98 LIMIT BUY @ " + str.tostring(wkVAL, format.mintick) + " (Wk VAL) | SL " + str.tostring(pendWkSL, format.mintick) + " | TP " + str.tostring(pendWkTP, format.mintick) + " | R:R " + str.tostring(nz(pendWkRR, 0), "#.#") + " | " + str.tostring(nz(pendWkPipsAway, 0), "#") + " pips away | Size: " + str.tostring(nz(pendWkLots, 0), "#.##") + " lots", alert.freq_once_per_bar_close)
+if pendBuyMo and not nz(pendBuyMo[1], false) and not na(pendMoSL)
+    alert("F98 LIMIT BUY @ " + str.tostring(moVAL, format.mintick) + " (Mo VAL) | SL " + str.tostring(pendMoSL, format.mintick) + " | TP " + str.tostring(pendMoTP, format.mintick) + " | R:R " + str.tostring(nz(pendMoRR, 0), "#.#") + " | " + str.tostring(nz(pendMoPipsAway, 0), "#") + " pips away | Size: " + str.tostring(nz(pendMoLots, 0), "#.##") + " lots", alert.freq_once_per_bar_close)
+if pendBuyUnt and not nz(pendBuyUnt[1], false) and not na(pendUntSL)
+    alert("F98 LIMIT BUY @ " + str.tostring(nearUntSupPrice, format.mintick) + " (Unt) | SL " + str.tostring(pendUntSL, format.mintick) + " | TP " + str.tostring(pendUntTP, format.mintick) + " | R:R " + str.tostring(nz(pendUntRR, 0), "#.#") + " | " + str.tostring(nz(pendUntPipsAway, 0), "#") + " pips away | Size: " + str.tostring(nz(pendUntLots, 0), "#.##") + " lots", alert.freq_once_per_bar_close)
+
+alertcondition(buyTrig, "Market Buy", "F98 MKT BUY — Quality + R:R passed")
+alertcondition(pendBuyWk and not (pendBuyWk[1] == true), "Limit Buy (Wk)", "LIMIT BUY — Weekly VAL {{close}}")
+alertcondition(pendBuyMo and not (pendBuyMo[1] == true), "Limit Buy (Mo)", "LIMIT BUY — Monthly VAL {{close}}")
+alertcondition(pendBuyUnt and not (pendBuyUnt[1] == true), "Limit Buy (Unt)", "LIMIT BUY — Untested VAL {{close}}")
 alertcondition(regime == "TRANSITION" and (na(regime[1]) or regime[1] != "TRANSITION"), "Regime Transition", "VETO: Market entered TRANSITION regime")
 alertcondition(not na(activeSL) and low <= activeSL, "Stop Hit", "Stop loss hit — exit long position")
 alertcondition(tp1Hit and not nz(tp1Hit[1], false), "TP1 Hit", "TP1 (1R) reached — consider partial close or move SL to break-even")
