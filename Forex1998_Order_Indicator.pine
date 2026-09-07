@@ -627,7 +627,9 @@ bool qualPassBuy = qualBuy >= adjMinQualBuy
 // ── Multi-Level TP System ──
 float buyTP1 = close + buyStopDist * 1.0
 float buyTP2 = close + buyStopDist * 2.0
-float buyTP3 = nz(math.max(nz(wkVAH, close + buyStopDist * 3.0), nz(moVAH, close + buyStopDist * 3.0)), close + buyStopDist * 3.0)
+float _tp3wk = not na(wkVAH) and wkVAH > close ? wkVAH : close + buyStopDist * 3.0
+float _tp3mo = not na(moVAH) and moVAH > close ? moVAH : close + buyStopDist * 3.0
+float buyTP3 = math.max(_tp3wk, _tp3mo)
 
 // ── R:R Gate ──
 float buyTarget = na
@@ -639,13 +641,27 @@ else if exitMode == "R1.5_Target"
 else if exitMode == "Adaptive_Trail"
     buyTarget := buyTP2
 else
-    buyTarget := nz(math.max(nz(wkVAH, close), nz(moVAH, close)), close + atrV)
+    float _tWk = not na(wkVAH) and wkVAH > close ? wkVAH : na
+    float _tMo = not na(moVAH) and moVAH > close ? moVAH : na
+    buyTarget := not na(_tWk) or not na(_tMo) ? math.max(nz(_tWk, 0), nz(_tMo, 0)) : close + buyStopDist * rrMin
 
 float rrBuy = buyStopDist > 0 ? (buyTarget - close) / buyStopDist : 0.0
 bool rrPassBuy = rrBuy >= rrMin
 
+// ── Active trade tracking with Adaptive Trail (BUY only) ──
+var float activeSL     = na
+var float activeTP     = na
+var float activeTP1    = na
+var float activeTP2    = na
+var float activeTP3    = na
+var int   activeEntry  = na
+var float activeEntryPrice = na
+var float origStopDist = na
+var float trailHighest = na
+var bool  tp1Hit       = false
+
 // ── Final Signal (confirmed bars only) ──
-bool mktBuy = rawBuy and not vetoed and qualPassBuy and rrPassBuy and barstate.isconfirmed
+bool mktBuy = rawBuy and not vetoed and qualPassBuy and rrPassBuy and na(activeEntry) and barstate.isconfirmed
 
 // ── Cooldown ──
 var int lastBuyBar = -9999
@@ -659,18 +675,6 @@ var int winCount = 0
 var int lossCount = 0
 if buyTrig
     sigBuyCount += 1
-
-// ── Active trade tracking with Adaptive Trail (BUY only) ──
-var float activeSL     = na
-var float activeTP     = na
-var float activeTP1    = na
-var float activeTP2    = na
-var float activeTP3    = na
-var int   activeEntry  = na
-var float activeEntryPrice = na
-var float origStopDist = na
-var float trailHighest = na
-var bool  tp1Hit       = false
 
 if buyTrig
     activeSL    := buySL
