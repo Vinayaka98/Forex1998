@@ -133,18 +133,22 @@ if wkReady
         float bs = (_whi - _wlo) / vpRows
         for i = 0 to math.min(wkLen, 500)
             float barVol = nz(volume[i], 0) > 0 ? volume[i] : 1.0
-            int ix = math.min(int(math.floor((hlc3[i] - _wlo) / bs)), vpRows - 1)
-            if ix >= 0 and ix < vpRows
-                array.set(wkBins, ix, array.get(wkBins, ix) + barVol)
+            int ixLo = math.max(0, int(math.floor((low[i] - _wlo) / bs)))
+            int ixHi = math.min(vpRows - 1, int(math.floor((high[i] - _wlo) / bs)))
+            int spanBins = ixHi - ixLo + 1
+            float perBinVol = spanBins > 0 ? barVol / spanBins : barVol
+            for b = ixLo to ixHi
+                array.set(wkBins, b, array.get(wkBins, b) + perBinVol)
                 if close[i] >= open[i]
-                    array.set(wkBinsUp, ix, array.get(wkBinsUp, ix) + barVol)
+                    array.set(wkBinsUp, b, array.get(wkBinsUp, b) + perBinVol)
                 else
-                    array.set(wkBinsDn, ix, array.get(wkBinsDn, ix) + barVol)
+                    array.set(wkBinsDn, b, array.get(wkBinsDn, b) + perBinVol)
             _wvol += barVol
     [_wp, _wh, _wl] = vpCalc(wkBins, _whi, _wlo, _wvol, vpRows, vpVA)
-    wkPOC := _wp
-    wkVAH := _wh
-    wkVAL := _wl
+    if wkLen >= 6
+        wkPOC := _wp
+        wkVAH := _wh
+        wkVAL := _wl
     wkHi := _whi
     wkLo := _wlo
 
@@ -195,13 +199,16 @@ if moReady
         float bs = (_mhi - _mlo) / vpRows
         for i = 0 to math.min(moLen, 2000)
             float barVol = nz(volume[i], 0) > 0 ? volume[i] : 1.0
-            int ix = math.min(int(math.floor((hlc3[i] - _mlo) / bs)), vpRows - 1)
-            if ix >= 0 and ix < vpRows
-                array.set(moBins, ix, array.get(moBins, ix) + barVol)
+            int ixLo = math.max(0, int(math.floor((low[i] - _mlo) / bs)))
+            int ixHi = math.min(vpRows - 1, int(math.floor((high[i] - _mlo) / bs)))
+            int spanBins = ixHi - ixLo + 1
+            float perBinVol = spanBins > 0 ? barVol / spanBins : barVol
+            for b = ixLo to ixHi
+                array.set(moBins, b, array.get(moBins, b) + perBinVol)
                 if close[i] >= open[i]
-                    array.set(moBinsUp, ix, array.get(moBinsUp, ix) + barVol)
+                    array.set(moBinsUp, b, array.get(moBinsUp, b) + perBinVol)
                 else
-                    array.set(moBinsDn, ix, array.get(moBinsDn, ix) + barVol)
+                    array.set(moBinsDn, b, array.get(moBinsDn, b) + perBinVol)
             _mvol += barVol
     [_mp, _mh, _ml] = vpCalc(moBins, _mhi, _mlo, _mvol, vpRows, vpVA)
     moPOC := _mp
@@ -332,7 +339,7 @@ maSell += close < hma9 ? 1 : 0
 
 int   maNeut  = 15 - maBuy - maSell
 float maScore = (maBuy - maSell) / 15.0
-float score   = (oscScore + maScore) / 2.0
+float score   = oscScore * 0.65 + maScore * 0.35
 
 rating(float s) =>
     s > 0.5 ? "STRONG BUY" : s > 0.1 ? "BUY" : s < -0.5 ? "STRONG SELL" : s < -0.1 ? "SELL" : "NEUTRAL"
@@ -362,7 +369,7 @@ float priceLow10 = ta.lowest(low, 10)
 float priceLowPrev = ta.lowest(low[12], 10)
 float rsiLow10 = ta.lowest(rsiV, 10)
 float rsiLowPrev = ta.lowest(rsiV[12], 10)
-bool bullDiv = priceLow10 <= priceLowPrev and rsiLow10 > rsiLowPrev + 3.0 and rsiV < 45
+bool bullDiv = priceLow10 <= priceLowPrev and rsiLow10 > rsiLowPrev + 5.0 and rsiV < 40
 
 float priceHigh10 = ta.highest(high, 10)
 float priceHighPrev = ta.highest(high[12], 10)
@@ -426,7 +433,7 @@ if bullScore >= 60 and adxTrending
     regime := "BULL"
 else if bullScore <= 30 and adxTrending
     regime := "BEAR"
-else if not adxTrending or (bullScore > 35 and bullScore < 55)
+else if not adxTrending or (bullScore > 30 and bullScore < 60)
     regime := "RANGE"
 
 color regimeCol = switch regime
@@ -440,12 +447,12 @@ color regimeCol = switch regime
 //  ATR-NORMALIZED VP PROXIMITY
 // ══════════════════════════════════════════════════════════
 
-float distWkVAL = not na(wkVAL) and atrV > 0 ? math.abs(close - wkVAL) / atrV : 999.0
+float distWkVAL = not na(wkVAL) and atrV > 0 and close >= wkVAL ? (close - wkVAL) / atrV : 999.0
 float distWkVAH = not na(wkVAH) and atrV > 0 ? math.abs(close - wkVAH) / atrV : 999.0
-float distWkPOC = not na(wkPOC) and atrV > 0 ? math.abs(close - wkPOC) / atrV : 999.0
-float distMoVAL = not na(moVAL) and atrV > 0 ? math.abs(close - moVAL) / atrV : 999.0
+float distWkPOC = not na(wkPOC) and atrV > 0 and close <= wkPOC + atrV * 0.3 ? math.abs(close - wkPOC) / atrV : 999.0
+float distMoVAL = not na(moVAL) and atrV > 0 and close >= moVAL ? (close - moVAL) / atrV : 999.0
 float distMoVAH = not na(moVAH) and atrV > 0 ? math.abs(close - moVAH) / atrV : 999.0
-float distMoPOC = not na(moPOC) and atrV > 0 ? math.abs(close - moPOC) / atrV : 999.0
+float distMoPOC = not na(moPOC) and atrV > 0 and close <= moPOC + atrV * 0.3 ? math.abs(close - moPOC) / atrV : 999.0
 
 bool nearWkVAL = distWkVAL <= proxATR
 bool nearWkVAH = distWkVAH <= proxATR
@@ -459,10 +466,12 @@ float nearUntSupPrice = na
 
 if atrV > 0 and array.size(untVAL) > 0
     for i = 0 to array.size(untVAL) - 1
-        float d = math.abs(close - array.get(untVAL, i)) / atrV
-        if d < distUntSup
-            distUntSup := d
-            nearUntSupPrice := array.get(untVAL, i)
+        float lvl = array.get(untVAL, i)
+        if close >= lvl
+            float d = (close - lvl) / atrV
+            if d < distUntSup
+                distUntSup := d
+                nearUntSupPrice := lvl
 
 bool nearUntSup = distUntSup <= proxATR
 
@@ -535,7 +544,7 @@ qualityCalcBuy(string reg, float vpDist) =>
     q += close > e200 ? 20.0 : not na(e200) and math.abs(close - e200) / nz(atrV, 1) < 1 ? 10.0 : 0.0
     q += vpDist < 0.3 ? 20.0 : vpDist < 0.5 ? 15.0 : vpDist < 1.0 ? 10.0 : 0.0
     q += close > open ? 15.0 : 7.0
-    q += (rsiV > 30 and rsiV < 70) ? 10.0 : rsiV < 30 ? 5.0 : 0.0
+    q += rsiV < 30 ? 15.0 : (rsiV >= 30 and rsiV < 70) ? 10.0 : 0.0
     float _atrAvg = ta.sma(atrV, 20)
     q += not na(_atrAvg) and _atrAvg > 0 and atrV / _atrAvg > 0.5 and atrV / _atrAvg < 1.5 ? 5.0 : 0.0
     q += rawK < 30 ? 5.0 : (rawK >= 30 and rawK <= 70) ? 2.0 : 0.0
@@ -569,13 +578,13 @@ bool stratB_buy = regime == "RANGE" and nearSup and close >= nz(math.min(nz(wkVA
 bool oscOversold = rsiV < rsiOS or rawK < 25 or wrV < -75
 float scoreMA3 = (score + nz(score[1], score) + nz(score[2], score)) / 3.0
 float scoreMA6 = (nz(score[3], score) + nz(score[4], score) + nz(score[5], score)) / 3.0
-bool momBullish = scoreMA3 > scoreMA6 or score > 0.1
+bool momBullish = (scoreMA3 > scoreMA6 and scoreMA3 > -0.1) or score > 0.15
 
 bool v11_buy_classic = oscOversold and (nearSup or nearPOC) and momBullish and regime != "BEAR"
 bool v11_buy_poc = nearPOC and score > 0.1 and close > open and momBullish and regime != "BEAR"
-bool v11_buy_pattern = bullPattern and (nearSup or nearPOC) and score > 0.0 and regime != "BEAR"
-bool v11_buy_confluence = vpConfBuy and close > open and momBullish and regime != "BEAR"
-bool v11_buy_divergence = bullDiv and (nearSup or nearPOC) and close > open and regime != "BEAR"
+bool v11_buy_pattern = bullPattern and (nearSup or nearPOC) and score > 0.1 and momBullish and regime != "BEAR"
+bool v11_buy_confluence = vpConfBuy and close > open and momBullish and not (rsiV > rsiOB and rawK > 75) and regime != "BEAR"
+bool v11_buy_divergence = bullDiv and (nearSup or nearPOC) and close > open and score > 0.0 and regime != "BEAR"
 
 // Apply V3 filters: session + volatility + HTF bias
 bool sessPass = sessionOK or not useSess
@@ -618,6 +627,8 @@ bool vetoed = vetoTransition or vetoATR
 
 // ── Quality Gate (dynamic with confluence bonus) ──
 float qualBuy = rawBuy ? qualityCalcBuy(regime, nearestSup) : 0.0
+if bearDiv
+    qualBuy := qualBuy - 10.0
 
 int confBuyBonus = (bullPattern ? 1 : 0) + (vpConfBuy ? 1 : 0) + (oscOversold ? 1 : 0) + (bullDiv ? 1 : 0) + (volSpike and close > open ? 1 : 0)
 float adjMinQualBuy = confBuyBonus >= 3 ? minQuality - 20 : confBuyBonus >= 2 ? minQuality - 15 : confBuyBonus >= 1 ? minQuality - 10 : minQuality
@@ -661,7 +672,7 @@ var float trailHighest = na
 var bool  tp1Hit       = false
 
 // ── Final Signal (confirmed bars only) ──
-bool mktBuy = rawBuy and not vetoed and qualPassBuy and rrPassBuy and na(activeEntry) and barstate.isconfirmed
+bool mktBuy = rawBuy and not vetoed and qualPassBuy and rrPassBuy and buyConfCount >= 2 and na(activeEntry) and barstate.isconfirmed
 
 // ── Cooldown ──
 var int lastBuyBar = -9999
@@ -728,7 +739,7 @@ if not na(activeEntry)
                 float chandSL = trailHighest - atrV * 3.0
                 if chandSL > activeSL
                     activeSL := chandSL
-            if profitR >= 1.0 and activeSL < activeEntryPrice
+            if profitR >= 1.25 and activeSL < activeEntryPrice
                 activeSL := activeEntryPrice + atrV * 0.05
             if profitR >= 2.0
                 float tightSL = trailHighest - atrV * 2.0
@@ -740,7 +751,7 @@ if not na(activeEntry)
             float newSL = low - atrV * 0.3
             if newSL > activeSL
                 activeSL := newSL
-            if exitMode == "Struct_Trail_BE" and not na(activeEntryPrice) and (high - activeEntryPrice) > buyStopDist * 0.5
+            if exitMode == "Struct_Trail_BE" and not na(activeEntryPrice) and (high - activeEntryPrice) > nz(origStopDist, buyStopDist) * 0.5
                 if activeSL < activeEntryPrice
                     activeSL := activeEntryPrice + atrV * 0.05
 
