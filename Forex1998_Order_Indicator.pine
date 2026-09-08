@@ -356,13 +356,37 @@ string oscR = rating(oscScore)
 string maR  = rating(maScore)
 string totR = rating(score)
 
-// ── Higher Timeframe Daily Bias (anti-repaint: uses previous completed daily bar) ──
-float dlyClose = request.security(syminfo.tickerid, "D", close[1])
-float dlyEMA50 = request.security(syminfo.tickerid, "D", ta.ema(close, 50)[1])
-bool htfBull = useHTF and not na(dlyClose) and not na(dlyEMA50) and dlyClose > dlyEMA50
-bool htfBear = useHTF and not na(dlyClose) and not na(dlyEMA50) and dlyClose < dlyEMA50
+// ── Multi-Timeframe Top-Down Analysis (anti-repaint: all use [1]) ──
+
+// Monthly: macro direction
+[mtfMoClose, mtfMoEMA20, mtfMoRSI] = request.security(syminfo.tickerid, "M", [close[1], ta.ema(close, 20)[1], ta.rsi(close, 14)[1]])
+bool moBullMTF = not na(mtfMoClose) and not na(mtfMoEMA20) and mtfMoClose > mtfMoEMA20 and mtfMoRSI > 45
+bool moBearMTF = not na(mtfMoClose) and not na(mtfMoEMA20) and mtfMoClose < mtfMoEMA20 and mtfMoRSI < 45
+
+// 2-Weekly: intermediate trend
+[mtfTwClose, mtfTwEMA20, mtfTwRSI] = request.security(syminfo.tickerid, "2W", [close[1], ta.ema(close, 20)[1], ta.rsi(close, 14)[1]])
+bool twBullMTF = not na(mtfTwClose) and not na(mtfTwEMA20) and mtfTwClose > mtfTwEMA20 and mtfTwRSI > 45
+bool twBearMTF = not na(mtfTwClose) and not na(mtfTwEMA20) and mtfTwClose < mtfTwEMA20 and mtfTwRSI < 45
+
+// Weekly: swing direction
+[mtfWkClose, mtfWkEMA20, mtfWkRSI] = request.security(syminfo.tickerid, "W", [close[1], ta.ema(close, 20)[1], ta.rsi(close, 14)[1]])
+bool wkBullMTF = not na(mtfWkClose) and not na(mtfWkEMA20) and mtfWkClose > mtfWkEMA20 and mtfWkRSI > 45
+bool wkBearMTF = not na(mtfWkClose) and not na(mtfWkEMA20) and mtfWkClose < mtfWkEMA20 and mtfWkRSI < 45
+
+// Daily: close + EMA20 + EMA50 + RSI
+[dlyClose, dlyEMA20, dlyEMA50, dlyRSI] = request.security(syminfo.tickerid, "D", [close[1], ta.ema(close, 20)[1], ta.ema(close, 50)[1], ta.rsi(close, 14)[1]])
+bool dlyBullMTF = not na(dlyClose) and not na(dlyEMA20) and dlyClose > dlyEMA20 and dlyRSI > 40
+bool dlyBearMTF = not na(dlyClose) and not na(dlyEMA20) and dlyClose < dlyEMA20 and dlyRSI < 40
+
+// MTF alignment score
+int mtfBullCount = (moBullMTF ? 1 : 0) + (twBullMTF ? 1 : 0) + (wkBullMTF ? 1 : 0) + (dlyBullMTF ? 1 : 0)
+int mtfBearCount = (moBearMTF ? 1 : 0) + (twBearMTF ? 1 : 0) + (wkBearMTF ? 1 : 0) + (dlyBearMTF ? 1 : 0)
+
+// Backward-compatible flags (used by existing logic)
+bool htfBull = useHTF and mtfBullCount >= 2 and mtfBearCount <= 1
+bool htfBear = useHTF and mtfBearCount >= 2
 bool htfNeutral = useHTF and not htfBull and not htfBear
-string htfBias = htfBull ? "BULL" : htfBear ? "BEAR" : "NEUTRAL"
+string htfBias = htfBull ? "BULL " + str.tostring(mtfBullCount) + "/4" : htfBear ? "BEAR " + str.tostring(mtfBearCount) + "/4" : "MIXED " + str.tostring(mtfBullCount) + "B/" + str.tostring(mtfBearCount) + "S"
 
 // ── RSI Divergence Detection ──
 float priceLow10 = ta.lowest(low, 10)
@@ -1109,12 +1133,13 @@ if showTbl and barstate.islast and not na(tbl)
     table.cell(tbl, 3, 0, "BUY ONLY", text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 4, 0, buyTrig ? buyGrade : "", text_color=buyTrig ? gradeCol(buyGrade) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
 
-    // Row 1 — Regime + HTF Bias
+    // Row 1 — Regime + MTF Bias
+    string mtfDetail = (moBullMTF ? "M+" : moBearMTF ? "M-" : "M~") + " " + (twBullMTF ? "2W+" : twBearMTF ? "2W-" : "2W~") + " " + (wkBullMTF ? "W+" : wkBearMTF ? "W-" : "W~") + " " + (dlyBullMTF ? "D+" : dlyBearMTF ? "D-" : "D~")
     table.cell(tbl, 0, 1, "Regime", text_color=mFg, text_size=size.small, text_halign=text.align_left)
     table.cell(tbl, 1, 1, regime, text_color=regimeCol, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 2, 1, "Bull:" + str.tostring(bullScore, "#"), text_color=mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 1, "HTF:" + htfBias, text_color=htfBull ? color.new(#00E676, 0) : htfBear ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 1, "", text_size=size.small)
+    table.cell(tbl, 3, 1, "MTF:" + htfBias, text_color=htfBull ? color.new(#00E676, 0) : htfBear ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 4, 1, mtfDetail, text_color=mFg, text_size=size.tiny, text_halign=text.align_left)
 
     // Row 2 — Oscillators
     table.cell(tbl, 0, 2, "Oscillators", text_color=mFg, text_size=size.small, text_halign=text.align_left)
