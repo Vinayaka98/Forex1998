@@ -574,17 +574,22 @@ bool stratA_buy = regime == "BULL" and (nearSup or nearPOC) and close >= nz(wkVA
 // ── Strategy B: Range Reversion ──
 bool stratB_buy = regime == "RANGE" and nearSup and close >= nz(math.min(nz(wkVAL, close), nz(moVAL, close)), close)
 
+// ── Oscillator extremes ──
+int oscExtBuy = (rsiV < rsiOS ? 1 : 0) + (rawK < 25 ? 1 : 0) + (wrV < -75 ? 1 : 0)
+string strength = oscExtBuy >= 2 ? "STRONG" : "NORMAL"
+
 // ── V11 Hybrid: Enhanced with divergence path ──
 bool oscOversold = rsiV < rsiOS or rawK < 25 or wrV < -75
 float scoreMA3 = (score + nz(score[1], score) + nz(score[2], score)) / 3.0
 float scoreMA6 = (nz(score[3], score) + nz(score[4], score) + nz(score[5], score)) / 3.0
-bool momBullish = (scoreMA3 > scoreMA6 and scoreMA3 > -0.1) or score > 0.15
+bool momBullish = (scoreMA3 > scoreMA6 and scoreMA3 > 0.0) or score > 0.15
 
-bool v11_buy_classic = oscOversold and (nearSup or nearPOC) and momBullish and regime != "BEAR"
-bool v11_buy_poc = nearPOC and score > 0.1 and close > open and momBullish and regime != "BEAR"
+bool bodyConviction = candleRange > 0 and bodySize > candleRange * 0.15
+bool v11_buy_classic = oscExtBuy >= 2 and (nearSup or nearPOC) and momBullish and close > open and bodyConviction and regime != "BEAR"
+bool v11_buy_poc = nearPOC and score > 0.1 and close > open and momBullish and bodyConviction and regime != "BEAR"
 bool v11_buy_pattern = bullPattern and (nearSup or nearPOC) and score > 0.1 and momBullish and regime != "BEAR"
-bool v11_buy_confluence = vpConfBuy and close > open and momBullish and not (rsiV > rsiOB and rawK > 75) and regime != "BEAR"
-bool v11_buy_divergence = bullDiv and (nearSup or nearPOC) and close > open and score > 0.0 and regime != "BEAR"
+bool v11_buy_confluence = vpConfBuy and close > open and momBullish and bodyConviction and not (rsiV > rsiOB and rawK > 75) and regime != "BEAR"
+bool v11_buy_divergence = bullDiv and (nearSup or nearPOC) and close > open and score > 0.0 and bodyConviction and regime != "BEAR"
 
 // Apply V3 filters: session + volatility + HTF bias
 bool sessPass = sessionOK or not useSess
@@ -615,10 +620,6 @@ else
     else
         rawBuy := v11_buy
         activeStrat := "V11"
-
-// ── Oscillator extremes ──
-int oscExtBuy = (rsiV < rsiOS ? 1 : 0) + (rawK < 25 ? 1 : 0) + (wrV < -75 ? 1 : 0)
-string strength = oscExtBuy >= 2 ? "STRONG" : "NORMAL"
 
 // ── Hard Vetoes ──
 bool vetoTransition = regime == "TRANSITION"
@@ -672,7 +673,7 @@ var float trailHighest = na
 var bool  tp1Hit       = false
 
 // ── Final Signal (confirmed bars only) ──
-bool mktBuy = rawBuy and not vetoed and qualPassBuy and rrPassBuy and buyConfCount >= 2 and na(activeEntry) and barstate.isconfirmed
+bool mktBuy = rawBuy and not vetoed and qualPassBuy and rrPassBuy and buyConfCount >= 3 and na(activeEntry) and barstate.isconfirmed
 
 // ── Cooldown ──
 var int lastBuyBar = -9999
