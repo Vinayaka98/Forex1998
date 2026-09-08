@@ -19,7 +19,7 @@ g2      = "Strategy Settings"
 stratMode = input.string("V11: Hybrid", "Strategy Mode", options=["AUTO", "A: Trend Pullback", "B: Range Reversion", "V11: Hybrid"], group=g2)
 proxATR = input.float(0.6, "VP Proximity (ATR)", minval=0.1, maxval=3.0, step=0.1, group=g2)
 minQuality = input.int(65, "Min Quality Score", minval=0, maxval=100, group=g2)
-rrMin   = input.float(2.0, "Min R:R Ratio", minval=0.0, maxval=5.0, step=0.1, group=g2)
+rrMin   = input.float(1.5, "Min R:R Ratio", minval=0.0, maxval=5.0, step=0.1, group=g2)
 cdBars  = input.int(5, "Signal Cooldown (bars)", minval=1, maxval=50, group=g2)
 atrBuf  = input.float(0.35, "Stop ATR Buffer", minval=0.0, maxval=1.0, step=0.05, group=g2)
 minStopATR = input.float(1.0, "Min Stop Distance (ATR)", minval=0.1, maxval=3.0, step=0.1, group=g2)
@@ -27,10 +27,10 @@ pendRange = input.float(5.0, "Pending Range (ATR mult)", minval=2.0, maxval=10.0
 
 // ── Exit ──
 g2b     = "Exit Settings"
-exitMode = input.string("Adaptive_Trail", "Exit Model", options=["Adaptive_Trail", "R2_Target", "R1.5_Target", "Struct_Trail", "Struct_Trail_BE", "Time_15bar", "Time_20bar"], group=g2b, tooltip="Adaptive_Trail (V3 default): Chandelier trailing after 0.5R profit, break-even at 1R, tight trail at 2R. Maximizes winning runs while locking in profit.")
+exitMode = input.string("Adaptive_Trail", "Exit Model", options=["Adaptive_Trail", "R2_Target", "R1.5_Target", "Struct_Trail", "Struct_Trail_BE", "Time_15bar", "Time_20bar"], group=g2b, tooltip="Adaptive_Trail (V3 default): Standard chandelier (3 ATR) after 0.5R, break-even at 1R, hard exit at TP2 (2R). Gives swing trades room to develop while locking gains at 2R.")
 holdBars = input.int(20, "Time Exit Bars", minval=5, maxval=50, group=g2b)
-adaptMaxBars = input.int(30, "Adaptive Max Hold", minval=10, maxval=60, group=g2b, tooltip="Max bars for Adaptive_Trail before forced time exit. Longer hold allows trail to capture extended moves.")
-sigExpiry = input.int(3, "Signal Expiry (bars)", minval=1, maxval=10, group=g2b, tooltip="Auto-clear active trade display after this many bars if price hasn't moved past break-even. Frees the dashboard to show new opportunities.")
+adaptMaxBars = input.int(40, "Adaptive Max Hold", minval=10, maxval=60, group=g2b, tooltip="Max bars for Adaptive_Trail before forced time exit. Longer hold allows trail to capture extended moves.")
+sigExpiry = input.int(8, "Signal Expiry (bars)", minval=1, maxval=20, group=g2b, tooltip="Auto-clear active trade display after this many bars if price hasn't moved 0.25R above entry. Swing trades need 2-3 days to develop.")
 
 // ── Session Filter ──
 g_sess  = "Session Filter"
@@ -572,8 +572,8 @@ float scoreMA6 = (nz(score[3], score) + nz(score[4], score) + nz(score[5], score
 bool momBullish = scoreMA3 > scoreMA6 or score > 0.1
 
 bool v11_buy_classic = oscOversold and (nearSup or nearPOC) and momBullish and regime != "BEAR"
-bool v11_buy_poc = nearPOC and score > 0.1 and close > open and regime != "BEAR"
-bool v11_buy_pattern = bullPattern and (nearSup or nearPOC) and score > -0.1 and regime != "BEAR"
+bool v11_buy_poc = nearPOC and score > 0.1 and close > open and momBullish and regime != "BEAR"
+bool v11_buy_pattern = bullPattern and (nearSup or nearPOC) and score > 0.0 and regime != "BEAR"
 bool v11_buy_confluence = vpConfBuy and close > open and momBullish and regime != "BEAR"
 bool v11_buy_divergence = bullDiv and (nearSup or nearPOC) and close > open and regime != "BEAR"
 
@@ -725,13 +725,13 @@ if not na(activeEntry)
             if profitR >= 1.0
                 tp1Hit := true
             if profitR >= 0.5
-                float chandSL = trailHighest - atrV * 1.5
+                float chandSL = trailHighest - atrV * 3.0
                 if chandSL > activeSL
                     activeSL := chandSL
             if profitR >= 1.0 and activeSL < activeEntryPrice
                 activeSL := activeEntryPrice + atrV * 0.05
             if profitR >= 2.0
-                float tightSL = trailHighest - atrV * 0.8
+                float tightSL = trailHighest - atrV * 2.0
                 if tightSL > activeSL
                     activeSL := tightSL
 
