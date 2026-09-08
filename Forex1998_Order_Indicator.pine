@@ -783,12 +783,14 @@ if not na(activeEntry)
             tp1Hit           := false
 
 // ── Pending Orders (BUY only) ──
-bool oscApproachOS = rsiV < 45 or rawK < 35 or wrV < -55
+int oscApproachCount = (rsiV < 40 ? 1 : 0) + (rawK < 30 ? 1 : 0) + (wrV < -65 ? 1 : 0)
+bool oscApproachOS = oscApproachCount >= 2
+bool pendFiltersOK = oscApproachOS and momBullish and htfBuyPass and volOK and regime != "BEAR" and na(activeEntry)
 float riskAmt = accSize * riskPct / 100.0
 
-bool pendBuyWk  = not na(wkVAL) and close > wkVAL and distWkVAL > proxATR and distWkVAL < proxATR * pendRange and oscApproachOS and regime != "BEAR"
-bool pendBuyMo  = not na(moVAL) and close > moVAL and distMoVAL > proxATR and distMoVAL < proxATR * pendRange and oscApproachOS and regime != "BEAR"
-bool pendBuyUnt = not na(nearUntSupPrice) and close > nearUntSupPrice and distUntSup > proxATR and distUntSup < proxATR * pendRange and oscApproachOS and regime != "BEAR"
+bool pendBuyWk  = not na(wkVAL) and close > wkVAL and distWkVAL > proxATR and distWkVAL < proxATR * pendRange and pendFiltersOK
+bool pendBuyMo  = not na(moVAL) and close > moVAL and distMoVAL > proxATR and distMoVAL < proxATR * pendRange and pendFiltersOK
+bool pendBuyUnt = not na(nearUntSupPrice) and close > nearUntSupPrice and distUntSup > proxATR and distUntSup < proxATR * pendRange and pendFiltersOK
 
 // Pending order details + R:R gate (only show viable trades)
 float pendWkSL = na
