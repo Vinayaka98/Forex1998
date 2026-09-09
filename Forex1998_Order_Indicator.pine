@@ -133,8 +133,8 @@ if wkReady
         float bs = (_whi - _wlo) / vpRows
         for i = 0 to math.min(wkLen, 500)
             float barVol = nz(volume[i], 0) > 0 ? volume[i] : 1.0
-            int ixLo = math.max(0, int(math.floor((low[i] - _wlo) / bs)))
-            int ixHi = math.min(vpRows - 1, int(math.floor((high[i] - _wlo) / bs)))
+            int ixLo = math.max(0, math.min(vpRows - 1, int(math.floor((low[i] - _wlo) / bs))))
+            int ixHi = math.max(0, math.min(vpRows - 1, int(math.floor((high[i] - _wlo) / bs))))
             int spanBins = ixHi - ixLo + 1
             float perBinVol = spanBins > 0 ? barVol / spanBins : barVol
             for b = ixLo to ixHi
@@ -199,8 +199,8 @@ if moReady
         float bs = (_mhi - _mlo) / vpRows
         for i = 0 to math.min(moLen, 2000)
             float barVol = nz(volume[i], 0) > 0 ? volume[i] : 1.0
-            int ixLo = math.max(0, int(math.floor((low[i] - _mlo) / bs)))
-            int ixHi = math.min(vpRows - 1, int(math.floor((high[i] - _mlo) / bs)))
+            int ixLo = math.max(0, math.min(vpRows - 1, int(math.floor((low[i] - _mlo) / bs))))
+            int ixHi = math.max(0, math.min(vpRows - 1, int(math.floor((high[i] - _mlo) / bs))))
             int spanBins = ixHi - ixLo + 1
             float perBinVol = spanBins > 0 ? barVol / spanBins : barVol
             for b = ixLo to ixHi
