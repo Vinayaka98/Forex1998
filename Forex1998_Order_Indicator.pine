@@ -51,6 +51,13 @@ g_pos   = "Position Sizing"
 accSize = input.float(1000, "Account Size ($)", minval=100, group=g_pos, tooltip="Used to calculate suggested position size based on risk percentage.")
 riskPct = input.float(1.0, "Risk per Trade (%)", minval=0.1, maxval=5.0, step=0.1, group=g_pos)
 
+// ── V2 Trade Selection ──
+g_v2    = "V2 Trade Selection"
+useV2   = input.bool(true, "Enable V2 Filters", group=g_v2, tooltip="V2 trade-selection engine: EURAUD exclusion, ATR+ADX regime veto, fresh signal requirement.")
+v2AtrPctLen = input.int(100, "ATR Percentile Lookback", minval=50, maxval=500, group=g_v2, tooltip="Bars for ATR rolling percentile. 100 at 4H = ~17 trading days.")
+v2AtrPctThr = input.int(66, "ATR High Threshold (%ile)", minval=50, maxval=90, group=g_v2, tooltip="ATR percentile above this = HIGH volatility regime.")
+v2AdxThr    = input.float(18.0, "ADX Low Threshold", minval=10.0, maxval=30.0, step=1.0, group=g_v2, tooltip="ADX below this = LOW trend. High ATR + Low ADX = chaotic, reject.")
+
 // ── Display ──
 g3      = "Display"
 showTbl = input.bool(true, "Show Dashboard", group=g3)
@@ -243,6 +250,7 @@ float atrMA20 = ta.sma(atrV, 20)
 float atrRatio = nz(atrMA20, 0) > 0 ? atrV / atrMA20 : 1.0
 bool volOK = atrRatio > 0.5 and atrRatio < 2.5
 string volState = atrRatio <= 0.5 ? "LOW" : atrRatio >= 2.5 ? "HIGH" : atrRatio > 1.5 ? "ELEVATED" : "NORMAL"
+float atrPctRank = ta.percentrank(atrV, v2AtrPctLen)
 
 // ── 11 Oscillators (TradingView Technicals match) ──
 float rsiV = ta.rsi(close, 14)
@@ -750,6 +758,18 @@ bool vetoTransition = regime == "TRANSITION"
 bool vetoATR = na(atrV) or atrV < syminfo.mintick
 bool vetoed = vetoTransition or vetoATR
 
+// ── V2 Trade Selection Gates ──
+bool vetoEURAUD = useV2 and str.contains(syminfo.ticker, "EURAUD")
+bool atrIsHigh = atrPctRank > v2AtrPctThr
+bool adxIsLow = adxV < v2AdxThr
+bool vetoRegime = useV2 and atrIsHigh and adxIsLow
+var bool v2WasInBuyTrade = false
+var bool v2BuyReset = true
+var bool v2WasInSellTrade = false
+var bool v2SellReset = true
+bool v2PassBuy = not useV2 or (not vetoEURAUD and not vetoRegime and v2BuyReset)
+bool v2PassSell = not useV2 or (not vetoEURAUD and not vetoRegime and v2SellReset)
+
 // ── Quality Gate (dynamic with confluence bonus) ──
 float qualBuy = rawBuy ? qualityCalcBuy(regime, nearestSup) : 0.0
 if bearDiv
@@ -841,8 +861,8 @@ var float trailLowest      = na
 var bool  sellTp1Hit       = false
 
 // ── Final Signal (confirmed bars only, one trade at a time) ──
-bool mktBuy = rawBuy and not vetoed and qualPassBuy and rrPassBuy and buyConfCount >= 3 and na(activeEntry) and na(activeSellEntry) and barstate.isconfirmed
-bool mktSell = rawSell and not vetoed and qualPassSell and rrPassSell and sellConfCount >= 3 and na(activeEntry) and na(activeSellEntry) and barstate.isconfirmed
+bool mktBuy = rawBuy and not vetoed and qualPassBuy and rrPassBuy and buyConfCount >= 3 and na(activeEntry) and na(activeSellEntry) and v2PassBuy and barstate.isconfirmed
+bool mktSell = rawSell and not vetoed and qualPassSell and rrPassSell and sellConfCount >= 3 and na(activeEntry) and na(activeSellEntry) and v2PassSell and barstate.isconfirmed
 
 // ── Cooldown ──
 var int lastBuyBar = -9999
@@ -1046,10 +1066,27 @@ if not na(activeSellEntry)
             trailLowest          := na
             sellTp1Hit           := false
 
+// ── V2: Fresh Signal Reset Tracking ──
+if useV2
+    if not na(activeEntry) and not v2WasInBuyTrade
+        v2WasInBuyTrade := true
+    if na(activeEntry) and v2WasInBuyTrade
+        v2WasInBuyTrade := false
+        v2BuyReset := false
+    if not rawBuy
+        v2BuyReset := true
+    if not na(activeSellEntry) and not v2WasInSellTrade
+        v2WasInSellTrade := true
+    if na(activeSellEntry) and v2WasInSellTrade
+        v2WasInSellTrade := false
+        v2SellReset := false
+    if not rawSell
+        v2SellReset := true
+
 // ── Pending Orders (BUY & SELL) ──
 int oscApproachCount = (rsiV < 40 ? 1 : 0) + (rawK < 30 ? 1 : 0) + (wrV < -65 ? 1 : 0)
 bool oscApproachOS = oscApproachCount >= 2
-bool pendFiltersOK = oscApproachOS and momBullish and htfBuyPass and volOK and regime != "BEAR" and na(activeEntry) and na(activeSellEntry)
+bool pendFiltersOK = oscApproachOS and momBullish and htfBuyPass and volOK and regime != "BEAR" and na(activeEntry) and na(activeSellEntry) and v2PassBuy
 float riskAmt = accSize * riskPct / 100.0
 
 bool pendBuyWk  = not na(wkVAL) and close > wkVAL and distWkVAL > proxATR and distWkVAL < proxATR * pendRange and pendFiltersOK
@@ -1141,7 +1178,7 @@ bool hasPending = pendCount > 0
 // ── Sell Pending Orders (at resistance levels) ──
 int oscApproachOBCount = (rsiV > 60 ? 1 : 0) + (rawK > 70 ? 1 : 0) + (wrV > -35 ? 1 : 0)
 bool oscApproachOB = oscApproachOBCount >= 2
-bool pendSellFiltersOK = oscApproachOB and momBearish and htfSellPass and volOK and regime != "BULL" and na(activeEntry) and na(activeSellEntry)
+bool pendSellFiltersOK = oscApproachOB and momBearish and htfSellPass and volOK and regime != "BULL" and na(activeEntry) and na(activeSellEntry) and v2PassSell
 
 bool pendSellWk  = not na(wkVAH) and close < wkVAH and distWkVAH_sell > proxATR and distWkVAH_sell < proxATR * pendRange and pendSellFiltersOK
 bool pendSellMo  = not na(moVAH) and close < moVAH and distMoVAH_sell > proxATR and distMoVAH_sell < proxATR * pendRange and pendSellFiltersOK
@@ -1536,7 +1573,7 @@ if showTbl and barstate.islast and not na(tbl)
 
     // Row 0 — Header
     table.cell(tbl, 0, 0, "F98", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 0, "V3 BUY", text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 1, 0, useV2 ? "V3+V2" : "V3 BUY", text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 2, 0, stratMode == "AUTO" ? regime : stratMode, text_color=regimeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 3, 0, "BUY & SELL", text_color=color.new(#00BCD4, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     string activeGrade = buyTrig ? buyGrade : sellTrig ? sellGrade : ""
@@ -1640,12 +1677,16 @@ if showTbl and barstate.islast and not na(tbl)
     table.cell(tbl, 3, 9, "", text_size=size.small)
     table.cell(tbl, 4, 9, "", text_size=size.small)
 
-    // Row 10 — Vetoes
-    string vetoText = vetoTransition ? "TRANSITION" : vetoATR ? "ATR" : not sessPass ? "SESSION" : not volOK ? "VOLATILITY" : "NONE"
+    // Row 10 — Vetoes + V2 Status
+    string vetoText = vetoTransition ? "TRANSITION" : vetoATR ? "ATR" : not sessPass ? "SESSION" : not volOK ? "VOLATILITY" : vetoEURAUD ? "EURAUD" : vetoRegime ? "REGIME" : "NONE"
+    bool anyVeto = vetoed or not sessPass or not volOK or vetoEURAUD or vetoRegime
     table.cell(tbl, 0, 10, "Vetoes", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 10, vetoText, text_color=vetoed or not sessPass or not volOK ? color.new(#FF1744, 0) : color.new(#00E676, 0), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 10, "", text_size=size.small)
-    table.cell(tbl, 3, 10, "", text_size=size.small)
+    table.cell(tbl, 1, 10, vetoText, text_color=anyVeto ? color.new(#FF1744, 0) : color.new(#00E676, 0), text_size=size.small, text_halign=text.align_center)
+    string v2Status = not useV2 ? "V2 OFF" : vetoEURAUD ? "EURAUD" : vetoRegime ? "HiATR+LoADX" : not v2BuyReset ? "WAIT RESET" : "V2 PASS"
+    color v2Col = not useV2 ? mFg : (vetoEURAUD or vetoRegime or not v2BuyReset) ? color.new(#FF9800, 0) : color.new(#00E676, 0)
+    table.cell(tbl, 2, 10, v2Status, text_color=v2Col, text_size=size.small, text_halign=text.align_center)
+    string atrAdxInfo = "ATR:" + str.tostring(atrPctRank, "#") + "% ADX:" + str.tostring(adxV, "#.#")
+    table.cell(tbl, 3, 10, atrAdxInfo, text_color=vetoRegime ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_left)
     table.cell(tbl, 4, 10, "", text_size=size.small)
 
     // Row 11 — Signal + Win/Loss
