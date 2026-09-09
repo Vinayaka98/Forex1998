@@ -974,7 +974,7 @@ if not na(activeEntry)
 // Sell exit tracking
 if not na(activeSellEntry)
     int sellBarsHeld = bar_index - activeSellEntry
-    bool sellSigExpired = sellBarsHeld >= sigExpiry and not na(origSellStopDist) and nz(trailLowest, low) >= activeSellEntryPrice - nz(origSellStopDist, 1) * 0.25
+    bool sellSigExpired = sellBarsHeld >= sigExpiry and not na(origSellStopDist) and nz(trailLowest, low) >= activeSellEntryPrice - nz(origSellStopDist, 1) * 0.15
     if sellSigExpired
         activeSellSL         := na
         activeSellTP         := na
@@ -1002,14 +1002,14 @@ if not na(activeSellEntry)
             float profitR_s = (activeSellEntryPrice - low) / origSellStopDist
             if profitR_s >= 1.0
                 sellTp1Hit := true
-            if profitR_s >= 0.5
-                float chandSL_s = trailLowest + atrV * 3.0
+            if profitR_s >= 1.0
+                float chandSL_s = trailLowest + atrV * 4.0
                 if chandSL_s < activeSellSL
                     activeSellSL := chandSL_s
-            if profitR_s >= 1.25 and activeSellSL > activeSellEntryPrice
+            if profitR_s >= 1.75 and activeSellSL > activeSellEntryPrice
                 activeSellSL := activeSellEntryPrice - atrV * 0.05
-            if profitR_s >= 2.0
-                float tightSL_s = trailLowest + atrV * 2.0
+            if profitR_s >= 2.5
+                float tightSL_s = trailLowest + atrV * 2.5
                 if tightSL_s < activeSellSL
                     activeSellSL := tightSL_s
 
