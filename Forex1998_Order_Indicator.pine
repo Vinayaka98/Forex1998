@@ -58,6 +58,12 @@ v2AtrPctLen = input.int(100, "ATR Percentile Lookback", minval=50, maxval=500, g
 v2AtrPctThr = input.int(66, "ATR High Threshold (%ile)", minval=50, maxval=90, group=g_v2, tooltip="ATR percentile above this = HIGH volatility regime.")
 v2AdxThr    = input.float(18.0, "ADX Low Threshold", minval=10.0, maxval=30.0, step=1.0, group=g_v2, tooltip="ADX below this = LOW trend. High ATR + Low ADX = chaotic, reject.")
 
+// ── V2 Trade Management ──
+g_v2m       = "V2 Trade Management"
+useStaleExit = input.bool(true, "Enable Stale Exit", group=g_v2m, tooltip="Close trade if max MFE hasn't reached threshold after N bars. Cuts dead-weight trades going nowhere. Validated on dev + 2 OOS datasets.")
+staleExitBars = input.int(8, "Stale Exit Bars", minval=3, maxval=30, group=g_v2m, tooltip="Bars before stale exit triggers. 8 at 4H = ~1.3 trading days.")
+staleExitMFE  = input.float(0.5, "Stale MFE Threshold (R)", minval=0.1, maxval=2.0, step=0.1, group=g_v2m, tooltip="If max favourable excursion hasn't reached this R-multiple by stale bars, close at market.")
+
 // ── Display ──
 g3      = "Display"
 showTbl = input.bool(true, "Show Dashboard", group=g3)
@@ -929,6 +935,12 @@ if not na(activeEntry)
         tp1Hit           := false
 
     if not sigExpired
+        // Stale exit: close if MFE hasn't reached threshold after N bars
+        if useStaleExit and barsHeld >= staleExitBars and not na(origStopDist) and origStopDist > 0
+            float maxMFE_R = (nz(trailHighest, high) - activeEntryPrice) / origStopDist
+            if maxMFE_R < staleExitMFE
+                timeExit := true
+
         // Time exit logic
         if exitMode == "Time_15bar" and barsHeld >= 15
             timeExit := true
@@ -1008,6 +1020,12 @@ if not na(activeSellEntry)
         sellTp1Hit           := false
 
     if not sellSigExpired
+        // Stale exit for sells
+        if useStaleExit and sellBarsHeld >= staleExitBars and not na(origSellStopDist) and origSellStopDist > 0
+            float sellMaxMFE_R = (activeSellEntryPrice - nz(trailLowest, low)) / origSellStopDist
+            if sellMaxMFE_R < staleExitMFE
+                timeExitSell := true
+
         if exitMode == "Time_15bar" and sellBarsHeld >= 15
             timeExitSell := true
         else if exitMode == "Time_20bar" and sellBarsHeld >= holdBars
@@ -1573,7 +1591,7 @@ if showTbl and barstate.islast and not na(tbl)
 
     // Row 0 — Header
     table.cell(tbl, 0, 0, "F98", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 0, useV2 ? "V3+V2" : "V3 BUY", text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 1, 0, useV2 ? (useStaleExit ? "V3+V2+SE" : "V3+V2") : "V3 BUY", text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 2, 0, stratMode == "AUTO" ? regime : stratMode, text_color=regimeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 3, 0, "BUY & SELL", text_color=color.new(#00BCD4, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     string activeGrade = buyTrig ? buyGrade : sellTrig ? sellGrade : ""
