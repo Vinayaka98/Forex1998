@@ -1,10 +1,10 @@
 # Forex1998 V3 Audit Scripts — Environment
 # All scripts use Python stdlib only (no external packages).
 #
-# Exact environment used for audit:
+# Environment used for audit:
 #   Python 3.11.15
 #   Random seed: 42
 #
-# No numpy, pandas, or scipy required.
-# A random seed alone doesn't guarantee identical results if the
-# Python version changes — record and match the version above.
+# Recording the Python version preserves the full computational
+# environment (stdlib-only means algorithm, seed, and code are
+# sufficient for reproducibility).

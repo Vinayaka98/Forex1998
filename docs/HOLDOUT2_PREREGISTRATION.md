@@ -10,8 +10,7 @@
 
 - **Version:** V3 + V2 filters + Stale Exit
 - **Git commit (strategy):** `24b2f02` (Add stale exit management)
-- **Git commit (frozen baseline):** `d3f11e4` (Restructure repo for Holdout #2 freeze)
-- **Frozen branch:** `frozen/v3-pre-holdout2`
+- **Frozen branch:** `frozen/v3-pre-holdout2` (points at the final immutable commit)
 - **Pine Script SHA-256:** `09150ace06cd9cf8e54f21c84197b8a2dc6cc5196220761734829d99f93a14bc`
 - **File:** `Forex1998_Order_Indicator.pine` (frozen copy: `strategy/v3_frozen.pine`)
 - **No strategy changes permitted** until this holdout is fully analyzed
@@ -49,15 +48,17 @@
 ## 3. Data Requirements & Stopping Rule
 
 ### Stopping rule (predefined — no discretion):
-> Use an exact predefined calendar period across every pair, regardless of performance.
-> If fewer than 300 trades occur, extend the period by 6 months without looking at performance.
+> Run the predefined calendar period. If fewer than 300 eligible trades are
+> generated, extend by exactly six calendar months and rerun. Continue in
+> six-month increments until the dataset contains at least 300 eligible trades.
+> Include every eligible trade in the final six-month block; do not stop when
+> trade #300 occurs.
 
-**Do NOT use a trade-count target with discretion to stop anywhere in a range.** Stopping at 220 because numbers look good or pushing to 400 because they look bad is optional stopping — a mild form of p-hacking.
+**Do NOT use a trade-count target with discretion to stop anywhere in a range.** The endpoint is always the end of a calendar block, never an individual trade arrival.
 
 ### Data specifications:
 - **Calendar period:** Select a contiguous date range BEFORE viewing any results
 - **Time period:** Must be different from all existing data (DEV and prior OOS)
-- **Minimum target:** 300 trades across all pairs (extend by 6-month blocks if needed)
 - Export with Active SL and Active TP columns visible in TradingView
 - Every trade generated in the selected period is included — no exceptions
 
