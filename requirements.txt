@@ -1,0 +1,3 @@
+# Forex1998 V3 Audit Scripts
+# All scripts use Python stdlib only — no external dependencies required.
+# Python >= 3.8

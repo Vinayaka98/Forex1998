@@ -19,13 +19,20 @@ Tests:
  4. Block Bootstrap Monte Carlo: 10,000 resampled trade sequences
  5. Final verdict: "looks profitable" vs "evidence behind it"
 """
-import csv, os, math, random
+import csv, os, math, random, argparse, sys
 from datetime import datetime, timezone
 from collections import defaultdict
 
-random.seed(42)
+RANDOM_SEED = 42
+random.seed(RANDOM_SEED)
 
-UPLOAD_DIR = "/root/.claude/uploads/c9dd1cc3-70c3-5800-b09b-3644f5933104"
+DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+
+parser = argparse.ArgumentParser(description="Forex1998 V3 Full Statistical Audit")
+parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR,
+                    help="Directory containing CSV data files (default: ../data/)")
+_args, _ = parser.parse_known_args()
+UPLOAD_DIR = os.path.abspath(_args.data_dir)
 
 # ── File Registry ──
 # Format: (filename, tp_col, dataset_tag)

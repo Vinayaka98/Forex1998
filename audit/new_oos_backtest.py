@@ -7,10 +7,16 @@ These files have columns: Active SL, Active TP2, Active TP1, Active TP3,
 Sell SL, Sell TP2, Sell TP1, Sell TP3, Wk POC/VAH/VAL, Mo POC/VAH/VAL,
 Bull Divergence, Bear Div Warning
 """
-import csv, os, math
+import csv, os, math, argparse
 from datetime import datetime, timezone
 
-UPLOAD_DIR = "/root/.claude/uploads/c9dd1cc3-70c3-5800-b09b-3644f5933104"
+DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+
+parser = argparse.ArgumentParser(description="New OOS Validation — 7 EUR pairs")
+parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR,
+                    help="Directory containing CSV data files (default: ../data/)")
+_args, _ = parser.parse_known_args()
+UPLOAD_DIR = os.path.abspath(_args.data_dir)
 
 NEW_OOS_FILES = {
     "EURUSD": "5b931546-OANDA_EURUSD_240_15da8.csv",

@@ -7,11 +7,17 @@ early momentum signals, winner vs loser profiles, and more.
 
 Uses dev (5 EUR pairs, ~2576 bars each) + prior OOS (EURCHF) + new OOS (7 EUR pairs)
 """
-import csv, os, math
+import csv, os, math, argparse
 from datetime import datetime, timezone
 from collections import defaultdict
 
-UPLOAD_DIR = "/root/.claude/uploads/c9dd1cc3-70c3-5800-b09b-3644f5933104"
+DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+
+parser = argparse.ArgumentParser(description="EUR Mastery Analysis")
+parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR,
+                    help="Directory containing CSV data files (default: ../data/)")
+_args, _ = parser.parse_known_args()
+UPLOAD_DIR = os.path.abspath(_args.data_dir)
 
 DEV_FILES = {
     "EURNZD": ("2c010574-OANDA_EURNZD_240.csv", "Active TP"),

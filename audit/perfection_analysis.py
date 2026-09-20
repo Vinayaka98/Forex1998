@@ -8,12 +8,18 @@ Prior OOS EURCHF: BUY only (no Sell SL columns)
 
 Goal: Find optimal filters for BOTH directions across all EUR pairs.
 """
-import csv, os, math
+import csv, os, math, argparse
 from datetime import datetime, timezone
 from collections import defaultdict
 from itertools import combinations
 
-UPLOAD_DIR = "/root/.claude/uploads/c9dd1cc3-70c3-5800-b09b-3644f5933104"
+DEFAULT_DATA_DIR = os.path.join(os.path.dirname(__file__), "..", "data")
+
+parser = argparse.ArgumentParser(description="EUR Perfection Analysis — BUY + SELL")
+parser.add_argument("--data-dir", default=DEFAULT_DATA_DIR,
+                    help="Directory containing CSV data files (default: ../data/)")
+_args, _ = parser.parse_known_args()
+UPLOAD_DIR = os.path.abspath(_args.data_dir)
 
 DEV_FILES = {
     "EURNZD": ("2c010574-OANDA_EURNZD_240.csv", "Active TP", None),
