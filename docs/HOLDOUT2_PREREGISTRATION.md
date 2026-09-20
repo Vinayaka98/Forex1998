@@ -9,9 +9,11 @@
 ## 1. Frozen Strategy
 
 - **Version:** V3 + V2 filters + Stale Exit
-- **Git commit:** `24b2f02` (Add stale exit management)
+- **Git commit (strategy):** `24b2f02` (Add stale exit management)
+- **Git commit (frozen baseline):** `d3f11e4` (Restructure repo for Holdout #2 freeze)
+- **Frozen branch:** `frozen/v3-pre-holdout2`
 - **Pine Script SHA-256:** `09150ace06cd9cf8e54f21c84197b8a2dc6cc5196220761734829d99f93a14bc`
-- **File:** `Forex1998_Order_Indicator.pine`
+- **File:** `Forex1998_Order_Indicator.pine` (frozen copy: `strategy/v3_frozen.pine`)
 - **No strategy changes permitted** until this holdout is fully analyzed
 
 ### V3 Parameters (frozen)
