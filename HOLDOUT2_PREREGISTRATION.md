@@ -44,27 +44,69 @@
 
 ---
 
-## 3. Data Requirements
+## 3. Data Requirements & Stopping Rule
 
-- **Target: at least 200-300 genuinely untouched trades** (not bars — trades are what matter statistically)
-- Bars are raw history; trade count depends on signal frequency
-- At current signal frequency (~1 trade per 25-50 bars per pair), aim for **5,000-10,000+ bars per pair** to generate enough trades
+### Stopping rule (predefined — no discretion):
+> Use an exact predefined calendar period across every pair, regardless of performance.
+> If fewer than 300 trades occur, extend the period by 6 months without looking at performance.
+
+**Do NOT use a trade-count target with discretion to stop anywhere in a range.** Stopping at 220 because numbers look good or pushing to 400 because they look bad is optional stopping — a mild form of p-hacking.
+
+### Data specifications:
+- **Calendar period:** Select a contiguous date range BEFORE viewing any results
 - **Time period:** Must be different from all existing data (DEV and prior OOS)
-- **Date range must be selected BEFORE viewing any performance results**
+- **Minimum target:** 300 trades across all pairs (extend by 6-month blocks if needed)
 - Export with Active SL and Active TP columns visible in TradingView
+- Every trade generated in the selected period is included — no exceptions
+
+### Note on statistical power:
+300 trades may remain statistically inconclusive at +0.031R/trade expectancy. That's acceptable — Holdout #2's job is replication, not producing a predetermined verdict.
 
 ---
 
-## 4. Cost Assumptions (locked)
+## 4. Cost Model (locked)
 
-| Component | Realistic | Pessimistic |
-|-----------|-----------|-------------|
-| Spread | 1.5 pips (0.030R) | 2.5 pips (0.050R) |
-| Commission | $7/100k RT (0.014R) | $10/100k RT (0.020R) |
-| Slippage | 0.5 pips (0.010R) | 1.0 pips (0.020R) |
-| **Total** | **0.054R/trade** | **0.080R/trade** |
+### Per-trade cost calculation (not a flat constant):
+Costs vary by pair and stop distance. Each trade's cost is computed individually:
 
-Based on ~50 pip average stop distance on 4H EUR pairs.
+```
+cost_pips = spread_pips + commission_pips + slippage_pips
+cost_R    = cost_pips / stop_distance_pips
+```
+
+This is critical: a 30-pip stop pays ~0.08R in costs, while a 70-pip stop pays ~0.035R. A flat 0.054R understates costs on tight stops and overstates them on wide stops.
+
+### Component assumptions:
+
+| Component | Realistic | Pessimistic | Source |
+|-----------|-----------|-------------|--------|
+| Spread | Per-pair typical (see below) | +1.0 pip | OANDA typical spreads |
+| Commission | $7/100k RT (~0.7 pips) | $10/100k RT (~1.0 pips) | Broker schedule |
+| Slippage | 0.5 pips | 1.0 pips | Conservative estimate |
+
+### Pair-specific typical spreads (realistic scenario):
+| Pair | Typical Spread (pips) |
+|------|----------------------|
+| EURUSD | 1.0 |
+| EURGBP | 1.5 |
+| EURAUD | 2.0 |
+| EURCAD | 2.0 |
+| EURNZD | 2.5 |
+| EURCHF | 2.0 |
+| EURJPY | 1.5 |
+| USDCAD | 1.5 |
+| NZDUSD | 1.5 |
+| AUDUSD | 1.0 |
+| USDJPY | 1.0 |
+| GBPUSD | 1.5 |
+
+### Reference: at 50-pip average stop
+| Scenario | Approx total cost (pips) | Approx R |
+|----------|-------------------------|----------|
+| Realistic (EUR major) | 2.2 pips | ~0.044R |
+| Realistic (EUR cross) | 3.2 pips | ~0.064R |
+| Pessimistic (EUR major) | 3.5 pips | ~0.070R |
+| Pessimistic (EUR cross) | 4.5 pips | ~0.090R |
 
 ---
 
@@ -104,6 +146,18 @@ Based on ~50 pip average stop distance on 4H EUR pairs.
 > V3's after-cost expectancy on EUR pairs in Holdout #2 is higher than on non-EUR pairs.
 
 **These are the only two hypotheses.** Any other patterns discovered are exploratory findings, not confirmations.
+
+### Preregistered validation method: Temporal clustering bootstrap
+Multiple FX pairs can trigger on the same macro move (e.g., ECB announcement fires EURUSD + EURGBP + EURNZD simultaneously). These are not three independent trades — they share the same driver.
+
+To account for this:
+> Bootstrap/cluster trades by calendar day or overlapping exposure windows. Trades open on the same calendar day across any pairs are treated as a single cluster. Resample clusters (not individual trades) to compute the confidence interval.
+
+This prevents correlated trades from inflating the effective sample size. Report both:
+1. Standard block bootstrap CI (individual trades, as in V3 audit)
+2. Cluster bootstrap CI (calendar-day clusters)
+
+The cluster CI is the more conservative and more honest measure.
 
 ---
 
