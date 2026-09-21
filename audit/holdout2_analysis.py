@@ -44,6 +44,7 @@ PAIR_SPREADS = {
     "EURUSD": 1.0, "EURGBP": 1.5, "EURAUD": 2.0, "EURCAD": 2.0,
     "EURNZD": 2.5, "EURCHF": 2.0, "EURJPY": 1.5, "USDCAD": 1.5,
     "NZDUSD": 1.5, "AUDUSD": 1.0, "USDJPY": 1.0, "GBPUSD": 1.5,
+    "AUDCAD": 2.0, "AUDNZD": 2.5, "AUDCHF": 2.0, "AUDJPY": 2.0,
 }
 COMMISSION_PIPS = 0.7       # $7/100k RT
 SLIPPAGE_PIPS = 0.5         # conservative
