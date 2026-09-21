@@ -506,10 +506,13 @@ float rc20Lo = ta.lowest(low, 20)
 float rcWidth = rc20Hi - rc20Lo
 float rangeATR = atrV > 0 ? rcWidth / atrV : 10.0
 
-float _rcNearTop = atrV > 0 and not na(rc20Hi) and (rc20Hi - high) / atrV < 0.3 ? 1.0 : 0.0
-float _rcNearBot = atrV > 0 and not na(rc20Lo) and (low - rc20Lo) / atrV < 0.3 ? 1.0 : 0.0
-int rcTopTouch = int(math.sum(_rcNearTop, 20))
-int rcBotTouch = int(math.sum(_rcNearBot, 20))
+int rcTopTouch = 0
+int rcBotTouch = 0
+for k = 0 to 19
+    if atrV > 0 and (rc20Hi - high[k]) / atrV < 0.3
+        rcTopTouch += 1
+    if atrV > 0 and (low[k] - rc20Lo) / atrV < 0.3
+        rcBotTouch += 1
 int rcBoundaryScore = math.min(rcTopTouch, rcBotTouch)
 
 float _failBrkUp = high[1] > high[2] and high[1] > high[3] and close[1] < high[2] and close[1] < open[1] ? 1.0 : 0.0
