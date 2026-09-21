@@ -67,6 +67,7 @@ HOLDOUT2_FILES = {
     "GBPUSD_H2": ("OANDA_GBPUSD_240.csv", "Active TP2"),
     "USDCAD_H2": ("OANDA_USDCAD_240.csv", "Active TP2"),
     "NZDUSD_H2": ("OANDA_NZDUSD_240.csv", "Active TP2"),
+    "USDJPY_H2": ("OANDA_USDJPY_240.csv", "Active TP2"),
 }
 
 N_SIMS = 10000
