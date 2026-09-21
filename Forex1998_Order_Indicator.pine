@@ -461,13 +461,14 @@ float ema50Slope = not na(e50[5]) ? (e50 - e50[5]) / nz(e50[5], 1) * 100 : 0.0
 bullScore += ema50Slope > 0.05 ? 10.0 : 0.0
 bullScore += adxV > 25 ? 10.0 : 0.0
 
-int hhCount = 0
-int hlCount = 0
-for k = 2 to 20
-    if high[k] > high[k + 2]
-        hhCount += 1
-    if low[k] > low[k + 2]
-        hlCount += 1
+float _hhFlag = high[2] > high[4] ? 1.0 : 0.0
+float _hlFlag = low[2] > low[4] ? 1.0 : 0.0
+float _lhFlag = high[2] < high[4] ? 1.0 : 0.0
+float _llFlag = low[2] < low[4] ? 1.0 : 0.0
+int hhCount = int(math.sum(_hhFlag, 19))
+int hlCount = int(math.sum(_hlFlag, 19))
+int lhCount = int(math.sum(_lhFlag, 19))
+int llCount = int(math.sum(_llFlag, 19))
 bullScore += hhCount > 7 and hlCount > 7 ? 10.0 : 0.0
 
 bool adxTrending = adxV > 20
@@ -491,21 +492,11 @@ color regimeCol = switch regime
 //  V4.1 REGIME CLASSIFIER (Observational — does not affect trades)
 // ══════════════════════════════════════════════════════════
 
-int lhCount = 0
-int llCount = 0
-for k = 2 to 20
-    if high[k] < high[k + 2]
-        lhCount += 1
-    if low[k] < low[k + 2]
-        llCount += 1
-
 bool adxRising = adxV > nz(adxV[5], adxV)
 float e20Slope = not na(e20[5]) and nz(e20[5], 1) > 0 ? (e20 - e20[5]) / nz(e20[5], 1) * 100 : 0.0
 
-int e20CrossCount = 0
-for k = 1 to 20
-    if (close[k] > e20[k] and close[k + 1] <= e20[k + 1]) or (close[k] < e20[k] and close[k + 1] >= e20[k + 1])
-        e20CrossCount += 1
+float _e20CrossFlag = (close[1] > e20[1] and close[2] <= e20[2]) or (close[1] < e20[1] and close[2] >= e20[2]) ? 1.0 : 0.0
+int e20CrossCount = int(math.sum(_e20CrossFlag, 20))
 
 float _atrSma20 = ta.sma(atrV, 20)
 float atrRelative = not na(_atrSma20) and _atrSma20 > 0 ? atrV / _atrSma20 : 1.0
@@ -515,21 +506,15 @@ float rc20Lo = ta.lowest(low, 20)
 float rcWidth = rc20Hi - rc20Lo
 float rangeATR = atrV > 0 ? rcWidth / atrV : 10.0
 
-int rcTopTouch = 0
-int rcBotTouch = 0
-for k = 0 to 19
-    if atrV > 0 and (rc20Hi - high[k]) / atrV < 0.3
-        rcTopTouch += 1
-    if atrV > 0 and (low[k] - rc20Lo) / atrV < 0.3
-        rcBotTouch += 1
+float _rcNearTop = atrV > 0 and not na(rc20Hi) and (rc20Hi - high) / atrV < 0.3 ? 1.0 : 0.0
+float _rcNearBot = atrV > 0 and not na(rc20Lo) and (low - rc20Lo) / atrV < 0.3 ? 1.0 : 0.0
+int rcTopTouch = int(math.sum(_rcNearTop, 20))
+int rcBotTouch = int(math.sum(_rcNearBot, 20))
 int rcBoundaryScore = math.min(rcTopTouch, rcBotTouch)
 
-int rcFailedBreaks = 0
-for k = 1 to 15
-    if high[k] > high[k + 1] and high[k] > high[k + 2] and close[k] < high[k + 1] and close[k] < open[k]
-        rcFailedBreaks += 1
-    if low[k] < low[k + 1] and low[k] < low[k + 2] and close[k] > low[k + 1] and close[k] > open[k]
-        rcFailedBreaks += 1
+float _failBrkUp = high[1] > high[2] and high[1] > high[3] and close[1] < high[2] and close[1] < open[1] ? 1.0 : 0.0
+float _failBrkDn = low[1] < low[2] and low[1] < low[3] and close[1] > low[2] and close[1] > open[1] ? 1.0 : 0.0
+int rcFailedBreaks = int(math.sum(_failBrkUp + _failBrkDn, 15))
 
 float _rc20HiPrev = nz(rc20Hi[5], rc20Hi)
 float _rc20LoPrev = nz(rc20Lo[5], rc20Lo)
