@@ -409,27 +409,7 @@ bool htfBear = useHTF and mtfBearCount >= v4MtfReq and mtfBullCount <= 1
 bool htfNeutral = useHTF and not htfBull and not htfBear
 string htfBias = htfBull ? "BULL " + str.tostring(mtfBullCount) + "/4" : htfBear ? "BEAR " + str.tostring(mtfBearCount) + "/4" : "MIXED " + str.tostring(mtfBullCount) + "B/" + str.tostring(mtfBearCount) + "S"
 
-// V4.1b: Directional Permission Layer — separates regime from trade direction
-string macroBias = "NEUTRAL"
-if useHTF
-    if htfBull
-        macroBias := "BULLISH"
-    else if htfBear
-        macroBias := "BEARISH"
-    else if mtfBearCount > mtfBullCount
-        macroBias := "BEARISH"
-    else if mtfBullCount > mtfBearCount
-        macroBias := "BULLISH"
-color macroBiasCol = macroBias == "BULLISH" ? color.new(#00E676, 0) : macroBias == "BEARISH" ? color.new(#FF1744, 0) : color.new(#8b949e, 0)
-
-string tradePermission = "BOTH"
-if not useHTF
-    tradePermission := "BOTH"
-else if macroBias == "BULLISH"
-    tradePermission := "LONG_ONLY"
-else if macroBias == "BEARISH"
-    tradePermission := "SHORT_ONLY"
-color permCol = tradePermission == "LONG_ONLY" ? color.new(#00E676, 0) : tradePermission == "SHORT_ONLY" ? color.new(#FF1744, 0) : color.new(#2979FF, 0)
+// V4.1b: macroBias + tradePermission moved after rcState (needs V4.1 regime)
 
 // ── RSI Divergence Detection ──
 float priceLow10 = ta.lowest(low, 10)
@@ -621,6 +601,36 @@ else if rcTransition >= 45 and rcBullTrend < 60 and rcBearTrend < 60 and rcRange
     rcState := "TRANSITION"
     rcStateCol := color.new(#FFC107, 0)
     rcConfidence := rcTransition
+
+// V4.1b: Directional Permission Layer — HTF alignment + V4.1 regime
+string macroBias = "NEUTRAL"
+if useHTF
+    if htfBull
+        macroBias := "BULLISH"
+    else if htfBear
+        macroBias := "BEARISH"
+    else if mtfBearCount > mtfBullCount
+        macroBias := "BEARISH"
+    else if mtfBullCount > mtfBearCount
+        macroBias := "BULLISH"
+if rcState == "BULL_TREND" and macroBias == "NEUTRAL"
+    macroBias := "BULLISH"
+else if rcState == "BEAR_TREND" and macroBias == "NEUTRAL"
+    macroBias := "BEARISH"
+color macroBiasCol = macroBias == "BULLISH" ? color.new(#00E676, 0) : macroBias == "BEARISH" ? color.new(#FF1744, 0) : color.new(#8b949e, 0)
+
+string tradePermission = "BOTH"
+if not useHTF
+    tradePermission := "BOTH"
+else if rcState == "NO_TRADE"
+    tradePermission := "NONE"
+else if macroBias == "BULLISH"
+    tradePermission := "LONG_ONLY"
+else if macroBias == "BEARISH"
+    tradePermission := "SHORT_ONLY"
+color permCol = tradePermission == "LONG_ONLY" ? color.new(#00E676, 0) : tradePermission == "SHORT_ONLY" ? color.new(#FF1744, 0) : tradePermission == "NONE" ? color.new(#8b949e, 0) : color.new(#2979FF, 0)
+
+bool rcStateChanged = bar_index > 0 and rcState != rcState[1]
 
 // ══════════════════════════════════════════════════════════
 //  ATR-NORMALIZED VP PROXIMITY
@@ -1083,8 +1093,9 @@ if not na(activeEntry)
     bool buyNoProgress = not na(origStopDist) and origStopDist > 0 and (nz(trailHighest, high) - activeEntryPrice) / origStopDist < 0.25
     bool entryMissedBuy = buyNoProgress and barsHeld >= 2 and close < activeEntryPrice - atrV * 1.5
     bool dailyResetBuy = newTradingDay and buyNoProgress and barsHeld >= 1
+    bool regimeExpiredBuy = rcStateChanged and buyNoProgress and barsHeld >= 1
     bool sigExpired = barsHeld >= sigExpiry and buyNoProgress
-    bool clearBuy = entryMissedBuy or dailyResetBuy or sigExpired
+    bool clearBuy = entryMissedBuy or dailyResetBuy or regimeExpiredBuy or sigExpired
     if clearBuy
         if entryMissedBuy
             prevSetupInfo := "BUY MISSED @" + str.tostring(activeEntryPrice, format.mintick)
@@ -1108,7 +1119,7 @@ if not na(activeEntry)
 
     if not clearBuy
         if setupStatus == "CANDIDATE" and not buyNoProgress
-            setupStatus := "ACTIVE"
+            setupStatus := "FILLED"
         // Stale exit: close if MFE hasn't reached threshold after N bars
         if useStaleExit and barsHeld >= staleExitBars and not na(origStopDist) and origStopDist > 0
             float maxMFE_R = (nz(trailHighest, high) - activeEntryPrice) / origStopDist
@@ -1188,8 +1199,9 @@ if not na(activeSellEntry)
     bool sellNoProgress = not na(origSellStopDist) and origSellStopDist > 0 and (activeSellEntryPrice - nz(trailLowest, low)) / origSellStopDist < 0.15
     bool entryMissedSell = sellNoProgress and sellBarsHeld >= 2 and close > activeSellEntryPrice + atrV * 1.5
     bool dailyResetSell = newTradingDay and sellNoProgress and sellBarsHeld >= 1
+    bool regimeExpiredSell = rcStateChanged and sellNoProgress and sellBarsHeld >= 1
     bool sellSigExpired = sellBarsHeld >= sigExpiry and sellNoProgress
-    bool clearSell = entryMissedSell or dailyResetSell or sellSigExpired
+    bool clearSell = entryMissedSell or dailyResetSell or regimeExpiredSell or sellSigExpired
     if clearSell
         if entryMissedSell
             prevSetupInfo := "SELL MISSED @" + str.tostring(activeSellEntryPrice, format.mintick)
@@ -1213,7 +1225,7 @@ if not na(activeSellEntry)
 
     if not clearSell
         if setupStatus == "CANDIDATE" and not sellNoProgress
-            setupStatus := "ACTIVE"
+            setupStatus := "FILLED"
         // Stale exit for sells
         if useStaleExit and sellBarsHeld >= staleExitBars and not na(origSellStopDist) and origSellStopDist > 0
             float sellMaxMFE_R = (activeSellEntryPrice - nz(trailLowest, low)) / origSellStopDist
@@ -1481,6 +1493,14 @@ if pendSellUnt and not na(nearUntResPrice) and atrV > 0
 int pendSellCount = (pendSellWk ? 1 : 0) + (pendSellMo ? 1 : 0) + (pendSellUnt ? 1 : 0)
 bool hasPendingSell = pendSellCount > 0
 
+// V4.1c: Set PENDING state when limit orders exist, no active trade or fresh signal
+if (hasPending or hasPendingSell) and setupStatus == "SCANNING"
+    setupStatus := "PENDING"
+    setupDir := hasPending ? "BUY" : "SELL"
+if not hasPending and not hasPendingSell and setupStatus == "PENDING"
+    setupStatus := "SCANNING"
+    setupDir := ""
+
 // ══════════════════════════════════════════════════════════
 //  V4.1D: NEXT OPPORTUNITY PLANNER
 //  Runs every bar — determines actionable next step
@@ -1531,6 +1551,10 @@ else if sellTrig
     nxRR     := rrSell
     nxReason := "Signal fired — immediate entry"
     nxExpiry := "This bar"
+else if tradePermission == "NONE"
+    nxAction := "NO_TRADE"
+    nxReason := "No trade — " + rcState + " regime"
+    nxBlocked := setupStatus == "EXPIRED" or setupStatus == "MISSED" ? prevSetupInfo : ""
 else if rcState == "TRANSITION" and tradePermission == "LONG_ONLY"
     nxAction  := "BUY_STOP"
     nxEntry   := rc20Hi
@@ -1551,7 +1575,7 @@ else if rcState == "TRANSITION" and tradePermission == "SHORT_ONLY"
     nxRR      := _ssDist > 0 ? (rc20Lo - nxTP2) / _ssDist : 0.0
     nxReason  := "Transition — breakdown below range"
     nxExpiry  := "Until regime change"
-else if hasPending and tradePermission != "SHORT_ONLY"
+else if hasPending and (tradePermission == "LONG_ONLY" or tradePermission == "BOTH")
     nxAction := "BUY_LIMIT"
     nxEntry  := pendBuyMo ? moVAL : pendBuyWk ? wkVAL : nearUntSupPrice
     nxSL     := pendBuyMo ? pendMoSL : pendBuyWk ? pendWkSL : pendUntSL
@@ -1561,7 +1585,7 @@ else if hasPending and tradePermission != "SHORT_ONLY"
     string _limSrc = pendBuyMo ? "Mo VAL" : pendBuyWk ? "Wk VAL" : "Unt Support"
     nxReason := "Limit buy at " + _limSrc
     nxExpiry := "Until level invalidated"
-else if hasPendingSell and tradePermission != "LONG_ONLY"
+else if hasPendingSell and (tradePermission == "SHORT_ONLY" or tradePermission == "BOTH")
     nxAction := "SELL_LIMIT"
     nxEntry  := pendSellMo ? moVAH : pendSellWk ? wkVAH : nearUntResPrice
     nxSL     := pendSellMo ? pendSellMoSL : pendSellWk ? pendSellWkSL : pendSellUntSL
@@ -1571,19 +1595,21 @@ else if hasPendingSell and tradePermission != "LONG_ONLY"
     string _limSSrc = pendSellMo ? "Mo VAH" : pendSellWk ? "Wk VAH" : "Unt Resistance"
     nxReason := "Limit sell at " + _limSSrc
     nxExpiry := "Until level invalidated"
-else if tradePermission != "SHORT_ONLY" and (nearSup or nearPOC) and momBullish
+else if (tradePermission == "LONG_ONLY" or tradePermission == "BOTH") and (nearSup or nearPOC) and momBullish
     nxAction  := "WAIT_FOR_LEVEL"
     nxEntry   := nearSup ? (not na(wkVAL) ? wkVAL : na) : na
     nxReason  := "Approaching buy zone — wait for confirmation"
     nxBlocked := not sessPass ? "Session filter" : not volOK ? "Low volume" : regime == "BEAR" ? "Bear regime" : ""
-else if tradePermission != "LONG_ONLY" and (nearRes or nearPOC_sell) and momBearish
+else if (tradePermission == "SHORT_ONLY" or tradePermission == "BOTH") and (nearRes or nearPOC_sell) and momBearish
     nxAction  := "WAIT_FOR_LEVEL"
     nxEntry   := nearRes ? (not na(wkVAH) ? wkVAH : na) : na
     nxReason  := "Approaching sell zone — wait for confirmation"
     nxBlocked := not sessPass ? "Session filter" : not volOK ? "Low volume" : regime == "BULL" ? "Bull regime" : ""
 else
     nxAction := "NO_TRADE"
-    if tradePermission == "LONG_ONLY"
+    if tradePermission == "NONE"
+        nxReason := "No trade — " + rcState + " regime"
+    else if tradePermission == "LONG_ONLY"
         nxReason := "Waiting for buy setup in " + rcState
     else if tradePermission == "SHORT_ONLY"
         nxReason := "Waiting for sell setup in " + rcState
@@ -1787,8 +1813,7 @@ plot(showSL and not na(activeSellTP3) ? activeSellTP3 : na, "Sell TP3", color.ne
 // Regime background
 bgcolor(showBg ? (regime == "BULL" ? color.new(#00E676, 94) : regime == "BEAR" ? color.new(#FF1744, 94) : regime == "RANGE" ? color.new(#2979FF, 96) : na) : na, title="Regime Tint")
 
-// V4.1 classifier state change marker
-bool rcStateChanged = bar_index > 0 and rcState != rcState[1]
+// V4.1 classifier state change marker (rcStateChanged defined in V4.1b block)
 plotshape(rcStateChanged and rcState == "BULL_TREND", "RC Bull", shape.triangleup, location.bottom, color.new(#00E676, 50), size=size.tiny)
 plotshape(rcStateChanged and rcState == "BEAR_TREND", "RC Bear", shape.triangledown, location.bottom, color.new(#FF1744, 50), size=size.tiny)
 plotshape(rcStateChanged and rcState == "RANGE", "RC Range", shape.diamond, location.bottom, color.new(#2979FF, 50), size=size.tiny)
@@ -2088,7 +2113,7 @@ if showTbl and barstate.islast and not na(tbl)
         table.cell(tbl, c, 18, "", text_size=size.tiny)
 
     // Row 19 — Position Section Header
-    color lifecycleCol = setupStatus == "ACTIVE" ? color.new(#00E676, 0) : setupStatus == "CANDIDATE" ? color.new(#FFC107, 0) : setupStatus == "MISSED" ? color.new(#FF1744, 0) : setupStatus == "EXPIRED" ? color.new(#FF5722, 0) : mFg
+    color lifecycleCol = setupStatus == "FILLED" ? color.new(#00E676, 0) : setupStatus == "CANDIDATE" ? color.new(#FFC107, 0) : setupStatus == "PENDING" ? color.new(#2979FF, 0) : setupStatus == "MISSED" ? color.new(#FF1744, 0) : setupStatus == "EXPIRED" ? color.new(#FF5722, 0) : mFg
     table.cell(tbl, 0, 19, "POSITION", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
     table.cell(tbl, 1, 19, dispType, text_color=dispTypeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     string dirLabel = tradeDir != "" ? tradeDir : "---"
