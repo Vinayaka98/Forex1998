@@ -1532,8 +1532,36 @@ if not hasPending and not hasPendingSell and setupStatus == "PENDING"
 
 // ══════════════════════════════════════════════════════════
 //  V4.1D: NEXT OPPORTUNITY PLANNER
-//  Runs every bar — determines actionable next step
+//  Runs every bar — reasons about WHERE price is inside
+//  the market structure, not just IF a signal fired
 // ══════════════════════════════════════════════════════════
+
+// ── Structural Location: where is price in the range? ──
+float rcMid = (rc20Hi + rc20Lo) / 2.0
+float rcLocPct = rcWidth > 0 ? (close - rc20Lo) / rcWidth * 100.0 : 50.0
+string nxLocation = rcLocPct >= 80 ? "Upper 20%" : rcLocPct >= 60 ? "Upper mid" : rcLocPct >= 40 ? "Mid-range" : rcLocPct >= 20 ? "Lower mid" : "Lower 20%"
+bool inBuyZone = rcLocPct < 35
+bool inSellZone = rcLocPct > 65
+bool inNoChaseZone_buy = rcLocPct > 70
+bool inNoChaseZone_sell = rcLocPct < 30
+
+// refine location with VP levels
+if not na(wkVAL) and atrV > 0 and math.abs(close - wkVAL) / atrV < 0.5
+    nxLocation := "Near Wk VAL"
+else if not na(moVAL) and atrV > 0 and math.abs(close - moVAL) / atrV < 0.5
+    nxLocation := "Near Mo VAL"
+else if not na(wkVAH) and atrV > 0 and math.abs(close - wkVAH) / atrV < 0.5
+    nxLocation := "Near Wk VAH"
+else if not na(moVAH) and atrV > 0 and math.abs(close - moVAH) / atrV < 0.5
+    nxLocation := "Near Mo VAH"
+else if not na(wkPOC) and atrV > 0 and math.abs(close - wkPOC) / atrV < 0.5
+    nxLocation := "Near Wk POC"
+
+color nxLocCol = inBuyZone ? color.new(#00E676, 0) : inSellZone ? color.new(#FF1744, 0) : color.new(#FFC107, 0)
+
+// ── Nearest buy/sell target levels ──
+float nearestBuyLevel = not na(wkVAL) and not na(moVAL) ? math.min(wkVAL, moVAL) : not na(wkVAL) ? wkVAL : not na(moVAL) ? moVAL : na
+float nearestSellLevel = not na(wkVAH) and not na(moVAH) ? math.max(wkVAH, moVAH) : not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : na
 
 string nxAction  = "NO_TRADE"
 float  nxEntry   = na
@@ -1588,7 +1616,7 @@ else if rcState == "TRANSITION" and macroBias == "BULLISH"
     nxTP1     := rc20Hi + _bsDist
     nxTP2     := rc20Hi + _bsDist * 2.0
     nxRR      := _bsDist > 0 ? (nxTP2 - rc20Hi) / _bsDist : 0.0
-    nxReason  := "Transition — breakout above range"
+    nxReason  := "Transition — breakout above " + str.tostring(rc20Hi, format.mintick)
     nxExpiry  := "Until regime change"
 else if rcState == "TRANSITION" and macroBias == "BEARISH"
     nxAction  := "SELL_STOP"
@@ -1598,7 +1626,7 @@ else if rcState == "TRANSITION" and macroBias == "BEARISH"
     nxTP1     := rc20Lo - _ssDist
     nxTP2     := rc20Lo - _ssDist * 2.0
     nxRR      := _ssDist > 0 ? (rc20Lo - nxTP2) / _ssDist : 0.0
-    nxReason  := "Transition — breakdown below range"
+    nxReason  := "Transition — breakdown below " + str.tostring(rc20Lo, format.mintick)
     nxExpiry  := "Until regime change"
 else if tradePermission == "NONE"
     nxAction := "NO_TRADE"
@@ -1627,28 +1655,48 @@ else if hasPendingSell and (tradePermission == "SHORT_ONLY" or tradePermission =
     string _limSSrc = pendSellMo ? "Mo VAH" : pendSellWk ? "Wk VAH" : "Unt Resistance"
     nxReason := "Limit sell at " + _limSSrc
     nxExpiry := "Until level invalidated"
+else if (tradePermission == "LONG_ONLY" or tradePermission == "BOTH") and inNoChaseZone_buy
+    nxAction  := "WAIT_FOR_LEVEL"
+    nxEntry   := nearestBuyLevel
+    nxReason  := "Don't chase BUY — " + nxLocation + " of range"
+    nxBlocked := "Price too high for buy entry"
+    nxExpiry  := "Pullback to " + (not na(nearestBuyLevel) ? str.tostring(nearestBuyLevel, format.mintick) : "support")
+else if (tradePermission == "SHORT_ONLY" or tradePermission == "BOTH") and inNoChaseZone_sell
+    nxAction  := "WAIT_FOR_LEVEL"
+    nxEntry   := nearestSellLevel
+    nxReason  := "Don't chase SELL — " + nxLocation + " of range"
+    nxBlocked := "Price too low for sell entry"
+    nxExpiry  := "Rally to " + (not na(nearestSellLevel) ? str.tostring(nearestSellLevel, format.mintick) : "resistance")
 else if (tradePermission == "LONG_ONLY" or tradePermission == "BOTH") and (nearSup or nearPOC) and momBullish
     nxAction  := "WAIT_FOR_LEVEL"
-    nxEntry   := nearSup ? (not na(wkVAL) ? wkVAL : na) : na
-    nxReason  := "Approaching buy zone — wait for confirmation"
-    nxBlocked := not sessPass ? "Session filter" : not volOK ? "Low volume" : regime == "BEAR" ? "Bear regime" : ""
+    nxEntry   := nearSup ? (not na(wkVAL) ? wkVAL : not na(moVAL) ? moVAL : na) : na
+    nxReason  := "At buy zone (" + nxLocation + ") — wait for bullish rejection"
+    nxBlocked := not sessPass ? "Session filter" : not volOK ? "Low volume" : ""
 else if (tradePermission == "SHORT_ONLY" or tradePermission == "BOTH") and (nearRes or nearPOC_sell) and momBearish
     nxAction  := "WAIT_FOR_LEVEL"
-    nxEntry   := nearRes ? (not na(wkVAH) ? wkVAH : na) : na
-    nxReason  := "Approaching sell zone — wait for confirmation"
-    nxBlocked := not sessPass ? "Session filter" : not volOK ? "Low volume" : regime == "BULL" ? "Bull regime" : ""
+    nxEntry   := nearRes ? (not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : na) : na
+    nxReason  := "At sell zone (" + nxLocation + ") — wait for bearish rejection"
+    nxBlocked := not sessPass ? "Session filter" : not volOK ? "Low volume" : ""
+else if tradePermission == "LONG_ONLY" and inBuyZone
+    nxAction  := "WAIT_FOR_LEVEL"
+    nxEntry   := not na(wkVAL) ? wkVAL : not na(moVAL) ? moVAL : na
+    nxReason  := "In buy zone (" + nxLocation + ") — wait for bullish trigger"
+    nxBlocked := not momBullish ? "Momentum bearish" : not sessPass ? "Session filter" : ""
+else if tradePermission == "SHORT_ONLY" and inSellZone
+    nxAction  := "WAIT_FOR_LEVEL"
+    nxEntry   := not na(wkVAH) ? wkVAH : not na(moVAH) ? moVAH : na
+    nxReason  := "In sell zone (" + nxLocation + ") — wait for bearish trigger"
+    nxBlocked := not momBearish ? "Momentum bullish" : not sessPass ? "Session filter" : ""
 else
     nxAction := "NO_TRADE"
     if alignment == "CONFLICT"
         nxReason := "Direction conflict — " + rcState + " vs " + macroBias + " macro"
-    else if tradePermission == "NONE"
-        nxReason := "No trade — " + rcState + " regime"
     else if tradePermission == "LONG_ONLY"
-        nxReason := "Waiting for buy setup in " + rcState
+        nxReason := "Long only — price at " + nxLocation + ", waiting for pullback"
     else if tradePermission == "SHORT_ONLY"
-        nxReason := "Waiting for sell setup in " + rcState
+        nxReason := "Short only — price at " + nxLocation + ", waiting for rally"
     else
-        nxReason := "No setup — " + rcState + " regime"
+        nxReason := "No setup — " + rcState + " at " + nxLocation
     nxBlocked := setupStatus == "EXPIRED" or setupStatus == "MISSED" ? prevSetupInfo : ""
 
 color nxActCol = switch nxAction
@@ -2259,9 +2307,9 @@ drawDashState(table t, color _hBg, color _hFg, color _dFg, color _mFg) =>
     table.cell(t, 4, 41, "V4.1B", text_color=color.new(#FFC107, 0), text_size=size.tiny, text_halign=text.align_center)
     table.cell(t, 0, 42, "Permission", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
     table.cell(t, 1, 42, tradePermission, text_color=permCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(t, 2, 42, "", text_size=size.small)
-    table.cell(t, 3, 42, "", text_size=size.small)
-    table.cell(t, 4, 42, "", text_size=size.small)
+    table.cell(t, 2, 42, "Location", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 3, 42, nxLocation, text_color=nxLocCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 42, str.tostring(rcLocPct, "#") + "%", text_color=nxLocCol, text_size=size.tiny, text_halign=text.align_center)
     bool nxIsActive = nxAction == "ACTIVE_LONG" or nxAction == "ACTIVE_SHORT"
     table.cell(t, 0, 43, nxIsActive ? "CURRENT TRADE" : "NEXT OPPORTUNITY", text_color=_hFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
     table.cell(t, 1, 43, nxAction, text_color=nxActCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
