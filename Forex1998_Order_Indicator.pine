@@ -69,6 +69,7 @@ g_v4    = "V4 Trend Filter"
 useV4   = input.bool(true, "Enable V4 Trend Filter", group=g_v4, tooltip="V4-A: Require stronger HTF alignment to filter counter-trend entries. BE and trail tightening tested harmful across all thresholds — V3 trail retained as-is.")
 v4MtfMin = input.int(3, "Min HTF Alignment (of 4)", minval=2, maxval=4, group=g_v4, tooltip="Require this many timeframes (Monthly/2W/Weekly/Daily) aligned bullish. V3 required 2. Higher = stronger trend filter, fewer but higher-quality entries.")
 
+
 // ── Display ──
 g3      = "Display"
 showTbl = input.bool(true, "Show Dashboard", group=g3)
