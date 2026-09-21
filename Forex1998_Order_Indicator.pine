@@ -64,15 +64,10 @@ useStaleExit = input.bool(true, "Enable Stale Exit", group=g_v2m, tooltip="Close
 staleExitBars = input.int(8, "Stale Exit Bars", minval=3, maxval=30, group=g_v2m, tooltip="Bars before stale exit triggers. 8 at 4H = ~1.3 trading days.")
 staleExitMFE  = input.float(0.5, "Stale MFE Threshold (R)", minval=0.1, maxval=2.0, step=0.1, group=g_v2m, tooltip="If max favourable excursion hasn't reached this R-multiple by stale bars, close at market.")
 
-// ── V4 Profit Protection ──
-g_v4    = "V4 Profit Protection"
-useV4   = input.bool(true, "Enable V4 Profit Protection", group=g_v4, tooltip="V4 upgrades: earlier break-even, tighter trail after profit, stronger trend filter. Addresses profit-to-SL reversals identified in Holdout #2.")
-v4BeThr = input.float(0.75, "Break-Even Trigger (R)", minval=0.3, maxval=1.5, step=0.05, group=g_v4, tooltip="Move SL to entry once MFE reaches this R-multiple. V3 used 1.25R which let too many winners reverse. 0.75R locks profit earlier.")
-v4TrailStartR = input.float(0.75, "Trail Start (R)", minval=0.3, maxval=1.5, step=0.05, group=g_v4, tooltip="Start chandelier trail after this R profit. V3 used 0.5R.")
-v4TrailAtr = input.float(2.5, "Trail ATR Multiplier", minval=1.5, maxval=4.0, step=0.1, group=g_v4, tooltip="Chandelier trail distance in ATRs. V3 used 3.0. Tighter = protects more profit but may exit early.")
-v4TightAtr = input.float(1.5, "Tight Trail ATR (at 1.5R+)", minval=1.0, maxval=3.0, step=0.1, group=g_v4, tooltip="Even tighter trail once trade reaches 1.5R. V3 used 2.0 ATR at 2.0R.")
-v4TightR = input.float(1.5, "Tight Trail Trigger (R)", minval=1.0, maxval=2.5, step=0.1, group=g_v4, tooltip="R-multiple where tight trail kicks in. V3 used 2.0R.")
-v4MtfMin = input.int(3, "Min HTF Alignment (of 4)", minval=2, maxval=4, group=g_v4, tooltip="Require this many timeframes (Monthly/2W/Weekly/Daily) aligned bullish. V3 required 2. Higher = stronger trend filter.")
+// ── V4 Trend Filter ──
+g_v4    = "V4 Trend Filter"
+useV4   = input.bool(true, "Enable V4 Trend Filter", group=g_v4, tooltip="V4-A: Require stronger HTF alignment to filter counter-trend entries. BE and trail tightening tested harmful across all thresholds — V3 trail retained as-is.")
+v4MtfMin = input.int(3, "Min HTF Alignment (of 4)", minval=2, maxval=4, group=g_v4, tooltip="Require this many timeframes (Monthly/2W/Weekly/Daily) aligned bullish. V3 required 2. Higher = stronger trend filter, fewer but higher-quality entries.")
 
 // ── Display ──
 g3      = "Display"
@@ -968,19 +963,14 @@ if not na(activeEntry)
             float profitR = (high - activeEntryPrice) / origStopDist
             if profitR >= 1.0
                 tp1Hit := true
-            float _trailStartR = useV4 ? v4TrailStartR : 0.5
-            float _trailAtr    = useV4 ? v4TrailAtr    : 3.0
-            float _beR         = useV4 ? v4BeThr       : 1.25
-            float _tightR      = useV4 ? v4TightR      : 2.0
-            float _tightAtr    = useV4 ? v4TightAtr    : 2.0
-            if profitR >= _trailStartR
-                float chandSL = trailHighest - atrV * _trailAtr
+            if profitR >= 0.5
+                float chandSL = trailHighest - atrV * 3.0
                 if chandSL > activeSL
                     activeSL := chandSL
-            if profitR >= _beR and activeSL < activeEntryPrice
+            if profitR >= 1.25 and activeSL < activeEntryPrice
                 activeSL := activeEntryPrice + atrV * 0.05
-            if profitR >= _tightR
-                float tightSL = trailHighest - atrV * _tightAtr
+            if profitR >= 2.0
+                float tightSL = trailHighest - atrV * 2.0
                 if tightSL > activeSL
                     activeSL := tightSL
 
@@ -1056,19 +1046,14 @@ if not na(activeSellEntry)
             float profitR_s = (activeSellEntryPrice - low) / origSellStopDist
             if profitR_s >= 1.0
                 sellTp1Hit := true
-            float _sTrailStartR = useV4 ? v4TrailStartR : 1.0
-            float _sTrailAtr    = useV4 ? (v4TrailAtr + 1.0) : 4.0
-            float _sBeR         = useV4 ? (v4BeThr + 0.25) : 1.75
-            float _sTightR      = useV4 ? (v4TightR + 0.5) : 2.5
-            float _sTightAtr    = useV4 ? (v4TightAtr + 0.5) : 2.5
-            if profitR_s >= _sTrailStartR
-                float chandSL_s = trailLowest + atrV * _sTrailAtr
+            if profitR_s >= 1.0
+                float chandSL_s = trailLowest + atrV * 4.0
                 if chandSL_s < activeSellSL
                     activeSellSL := chandSL_s
-            if profitR_s >= _sBeR and activeSellSL > activeSellEntryPrice
+            if profitR_s >= 1.75 and activeSellSL > activeSellEntryPrice
                 activeSellSL := activeSellEntryPrice - atrV * 0.05
-            if profitR_s >= _sTightR
-                float tightSL_s = trailLowest + atrV * _sTightAtr
+            if profitR_s >= 2.5
+                float tightSL_s = trailLowest + atrV * 2.5
                 if tightSL_s < activeSellSL
                     activeSellSL := tightSL_s
 
@@ -1612,7 +1597,7 @@ if showTbl and barstate.islast and not na(tbl)
 
     // Row 0 — Header
     table.cell(tbl, 0, 0, "F98", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    string verLabel = useV4 ? "V4+V2+SE" : (useV2 ? (useStaleExit ? "V3+V2+SE" : "V3+V2") : "V3 BUY")
+    string verLabel = useV4 ? "V4A+V2+SE" : (useV2 ? (useStaleExit ? "V3+V2+SE" : "V3+V2") : "V3 BUY")
     table.cell(tbl, 1, 0, verLabel, text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 2, 0, stratMode == "AUTO" ? regime : stratMode, text_color=regimeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 3, 0, "BUY & SELL", text_color=color.new(#00BCD4, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
