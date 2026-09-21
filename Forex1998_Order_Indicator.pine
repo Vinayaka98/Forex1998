@@ -602,7 +602,8 @@ else if rcTransition >= 45 and rcBullTrend < 60 and rcBearTrend < 60 and rcRange
     rcStateCol := color.new(#FFC107, 0)
     rcConfidence := rcTransition
 
-// V4.1b: Directional Permission Layer — HTF alignment + V4.1 regime
+// V4.1b: Directional Permission Layer — rcState has veto over direction
+// macroBias = HTF-only view (what higher timeframes say)
 string macroBias = "NEUTRAL"
 if useHTF
     if htfBull
@@ -613,21 +614,37 @@ if useHTF
         macroBias := "BEARISH"
     else if mtfBullCount > mtfBearCount
         macroBias := "BULLISH"
-if rcState == "BULL_TREND" and macroBias == "NEUTRAL"
-    macroBias := "BULLISH"
-else if rcState == "BEAR_TREND" and macroBias == "NEUTRAL"
-    macroBias := "BEARISH"
 color macroBiasCol = macroBias == "BULLISH" ? color.new(#00E676, 0) : macroBias == "BEARISH" ? color.new(#FF1744, 0) : color.new(#8b949e, 0)
 
+// alignment: does rcState agree with macroBias?
+string alignment = "NEUTRAL"
+if rcState == "BULL_TREND"
+    alignment := macroBias == "BEARISH" ? "CONFLICT" : macroBias == "BULLISH" ? "ALIGNED" : "NEUTRAL"
+else if rcState == "BEAR_TREND"
+    alignment := macroBias == "BULLISH" ? "CONFLICT" : macroBias == "BEARISH" ? "ALIGNED" : "NEUTRAL"
+else if rcState == "RANGE"
+    alignment := macroBias != "NEUTRAL" ? "ALIGNED" : "NEUTRAL"
+color alignCol = alignment == "ALIGNED" ? color.new(#00E676, 0) : alignment == "CONFLICT" ? color.new(#FF1744, 0) : color.new(#8b949e, 0)
+
+// tradePermission: rcState is PRIMARY, macroBias steers only in RANGE
 string tradePermission = "BOTH"
 if not useHTF
     tradePermission := "BOTH"
 else if rcState == "NO_TRADE"
     tradePermission := "NONE"
-else if macroBias == "BULLISH"
-    tradePermission := "LONG_ONLY"
-else if macroBias == "BEARISH"
-    tradePermission := "SHORT_ONLY"
+else if rcState == "BULL_TREND"
+    tradePermission := alignment == "CONFLICT" ? "NONE" : "LONG_ONLY"
+else if rcState == "BEAR_TREND"
+    tradePermission := alignment == "CONFLICT" ? "NONE" : "SHORT_ONLY"
+else if rcState == "TRANSITION"
+    tradePermission := "NONE"
+else if rcState == "RANGE"
+    if macroBias == "BULLISH"
+        tradePermission := "LONG_ONLY"
+    else if macroBias == "BEARISH"
+        tradePermission := "SHORT_ONLY"
+    else
+        tradePermission := "BOTH"
 color permCol = tradePermission == "LONG_ONLY" ? color.new(#00E676, 0) : tradePermission == "SHORT_ONLY" ? color.new(#FF1744, 0) : tradePermission == "NONE" ? color.new(#8b949e, 0) : color.new(#2979FF, 0)
 
 bool rcStateChanged = bar_index > 0 and rcState != rcState[1]
@@ -1551,11 +1568,7 @@ else if sellTrig
     nxRR     := rrSell
     nxReason := "Signal fired — immediate entry"
     nxExpiry := "This bar"
-else if tradePermission == "NONE"
-    nxAction := "NO_TRADE"
-    nxReason := "No trade — " + rcState + " regime"
-    nxBlocked := setupStatus == "EXPIRED" or setupStatus == "MISSED" ? prevSetupInfo : ""
-else if rcState == "TRANSITION" and tradePermission == "LONG_ONLY"
+else if rcState == "TRANSITION" and macroBias == "BULLISH"
     nxAction  := "BUY_STOP"
     nxEntry   := rc20Hi
     nxSL      := rc20Hi - atrV * atrBuf
@@ -1565,7 +1578,7 @@ else if rcState == "TRANSITION" and tradePermission == "LONG_ONLY"
     nxRR      := _bsDist > 0 ? (nxTP2 - rc20Hi) / _bsDist : 0.0
     nxReason  := "Transition — breakout above range"
     nxExpiry  := "Until regime change"
-else if rcState == "TRANSITION" and tradePermission == "SHORT_ONLY"
+else if rcState == "TRANSITION" and macroBias == "BEARISH"
     nxAction  := "SELL_STOP"
     nxEntry   := rc20Lo
     nxSL      := rc20Lo + atrV * atrBuf
@@ -1575,6 +1588,13 @@ else if rcState == "TRANSITION" and tradePermission == "SHORT_ONLY"
     nxRR      := _ssDist > 0 ? (rc20Lo - nxTP2) / _ssDist : 0.0
     nxReason  := "Transition — breakdown below range"
     nxExpiry  := "Until regime change"
+else if tradePermission == "NONE"
+    nxAction := "NO_TRADE"
+    if alignment == "CONFLICT"
+        nxReason := "Direction conflict — " + rcState + " vs " + macroBias + " macro"
+    else
+        nxReason := "No trade — " + rcState + " regime"
+    nxBlocked := setupStatus == "EXPIRED" or setupStatus == "MISSED" ? prevSetupInfo : ""
 else if hasPending and (tradePermission == "LONG_ONLY" or tradePermission == "BOTH")
     nxAction := "BUY_LIMIT"
     nxEntry  := pendBuyMo ? moVAL : pendBuyWk ? wkVAL : nearUntSupPrice
@@ -1607,7 +1627,9 @@ else if (tradePermission == "SHORT_ONLY" or tradePermission == "BOTH") and (near
     nxBlocked := not sessPass ? "Session filter" : not volOK ? "Low volume" : regime == "BULL" ? "Bull regime" : ""
 else
     nxAction := "NO_TRADE"
-    if tradePermission == "NONE"
+    if alignment == "CONFLICT"
+        nxReason := "Direction conflict — " + rcState + " vs " + macroBias + " macro"
+    else if tradePermission == "NONE"
         nxReason := "No trade — " + rcState + " regime"
     else if tradePermission == "LONG_ONLY"
         nxReason := "Waiting for buy setup in " + rcState
@@ -2174,11 +2196,14 @@ drawDashState(table t, color _hBg, color _hFg, color _dFg, color _mFg) =>
     table.cell(t, 4, 40, "", text_size=size.small, bgcolor=_hBg)
     table.cell(t, 0, 41, "Macro Bias", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
     table.cell(t, 1, 41, macroBias, text_color=macroBiasCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(t, 2, 41, "Permission", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(t, 3, 41, tradePermission, text_color=permCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 41, "Alignment", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 3, 41, alignment, text_color=alignCol, text_size=size.small, text_halign=text.align_center)
     table.cell(t, 4, 41, "V4.1B", text_color=color.new(#FFC107, 0), text_size=size.tiny, text_halign=text.align_center)
-    for c = 0 to 4
-        table.cell(t, c, 42, "", text_size=size.tiny)
+    table.cell(t, 0, 42, "Permission", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 42, tradePermission, text_color=permCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 42, "", text_size=size.small)
+    table.cell(t, 3, 42, "", text_size=size.small)
+    table.cell(t, 4, 42, "", text_size=size.small)
     bool nxIsActive = nxAction == "ACTIVE_LONG" or nxAction == "ACTIVE_SHORT"
     table.cell(t, 0, 43, nxIsActive ? "CURRENT TRADE" : "NEXT OPPORTUNITY", text_color=_hFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
     table.cell(t, 1, 43, nxAction, text_color=nxActCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
