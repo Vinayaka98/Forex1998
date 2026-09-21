@@ -510,6 +510,33 @@ for k = 1 to 20
 float _atrSma20 = ta.sma(atrV, 20)
 float atrRelative = not na(_atrSma20) and _atrSma20 > 0 ? atrV / _atrSma20 : 1.0
 
+float rc20Hi = ta.highest(high, 20)
+float rc20Lo = ta.lowest(low, 20)
+float rcWidth = rc20Hi - rc20Lo
+float rangeATR = atrV > 0 ? rcWidth / atrV : 10.0
+
+int rcTopTouch = 0
+int rcBotTouch = 0
+for k = 0 to 19
+    if atrV > 0 and (rc20Hi - high[k]) / atrV < 0.3
+        rcTopTouch += 1
+    if atrV > 0 and (low[k] - rc20Lo) / atrV < 0.3
+        rcBotTouch += 1
+int rcBoundaryScore = math.min(rcTopTouch, rcBotTouch)
+
+int rcFailedBreaks = 0
+for k = 1 to 15
+    if high[k] > high[k + 1] and high[k] > high[k + 2] and close[k] < high[k + 1] and close[k] < open[k]
+        rcFailedBreaks += 1
+    if low[k] < low[k + 1] and low[k] < low[k + 2] and close[k] > low[k + 1] and close[k] > open[k]
+        rcFailedBreaks += 1
+
+float _rc20HiPrev = nz(rc20Hi[5], rc20Hi)
+float _rc20LoPrev = nz(rc20Lo[5], rc20Lo)
+bool rcHoldingAbove = close > _rc20HiPrev and nz(close[1], close) > _rc20HiPrev and nz(close[2], close) > _rc20HiPrev
+bool rcHoldingBelow = close < _rc20LoPrev and nz(close[1], close) < _rc20LoPrev and nz(close[2], close) < _rc20LoPrev
+bool rcHoldingOutside = rcHoldingAbove or rcHoldingBelow
+
 float rcBullTrend = 0.0
 rcBullTrend += mtfBullCount * 7.0
 rcBullTrend += adxV >= 20 ? 8.0 : 0.0
@@ -541,39 +568,48 @@ rcBearTrend += rsiV < 50 ? 7.0 : 0.0
 rcBearTrend := math.min(rcBearTrend, 100.0)
 
 float rcRange = 0.0
-rcRange += adxV < 18 ? 25.0 : adxV < 25 ? math.max(0.0, (25.0 - adxV) / 7.0 * 25.0) : 0.0
-rcRange += not adxRising ? 12.0 : 0.0
-rcRange += atrRelative >= 0.7 and atrRelative <= 1.3 ? 12.0 : 0.0
-rcRange += mtfBullCount <= 2 and mtfBearCount <= 2 ? 12.0 : 0.0
-rcRange += not na(e20) and atrV > 0 and math.abs(close - e20) / atrV < 0.5 ? 10.0 : not na(e20) and atrV > 0 and math.abs(close - e20) / atrV < 1.0 ? 5.0 : 0.0
-rcRange += bullScore > 30 and bullScore < 70 ? 10.0 : 0.0
-rcRange += math.abs(ema50Slope) < 0.03 ? 10.0 : math.abs(ema50Slope) < 0.05 ? 5.0 : 0.0
-rcRange += e20CrossCount >= 4 ? 9.0 : e20CrossCount >= 2 ? 5.0 : 0.0
+rcRange += adxV < 18 ? 15.0 : adxV < 25 ? math.max(0.0, (25.0 - adxV) / 7.0 * 15.0) : 0.0
+rcRange += not adxRising ? 5.0 : 0.0
+rcRange += atrRelative >= 0.7 and atrRelative <= 1.3 ? 10.0 : 0.0
+rcRange += mtfBullCount <= 2 and mtfBearCount <= 2 ? 10.0 : 0.0
+rcRange += rangeATR < 3.5 ? 12.0 : rangeATR < 5.0 ? 6.0 : 0.0
+rcRange += rcBoundaryScore >= 3 ? 12.0 : rcBoundaryScore >= 2 ? 6.0 : 0.0
+rcRange += e20CrossCount >= 4 ? 10.0 : e20CrossCount >= 2 ? 5.0 : 0.0
+rcRange += rcFailedBreaks >= 3 ? 10.0 : rcFailedBreaks >= 1 ? 5.0 : 0.0
+rcRange += math.abs(ema50Slope) < 0.03 and math.abs(e20Slope) < 0.05 ? 10.0 : math.abs(ema50Slope) < 0.05 ? 5.0 : 0.0
+rcRange += bullScore > 30 and bullScore < 70 ? 6.0 : 0.0
 rcRange := math.min(rcRange, 100.0)
 
 float rcTransition = 0.0
-rcTransition += atrRelative > 1.5 ? 25.0 : atrRelative > 1.2 ? 15.0 : 0.0
-rcTransition += adxRising and nz(adxV[5], adxV) < 22 ? 20.0 : 0.0
-rcTransition += high >= ta.highest(high, 20)[1] or low <= ta.lowest(low, 20)[1] ? 20.0 : 0.0
-rcTransition += math.abs(ema50Slope) > math.abs(nz(ema50Slope[5], 0)) and math.abs(ema50Slope) > 0.02 ? 15.0 : 0.0
-rcTransition += (mtfBullCount == 2 or mtfBearCount == 2) and mtfBullCount < 3 and mtfBearCount < 3 ? 10.0 : 0.0
-rcTransition += math.abs(bullScore - nz(bullScore[5], bullScore)) > 15 ? 10.0 : 0.0
+rcTransition += atrRelative > 1.5 ? 20.0 : atrRelative > 1.2 ? 12.0 : 0.0
+rcTransition += adxRising and nz(adxV[5], adxV) < 22 ? 18.0 : 0.0
+rcTransition += high >= ta.highest(high, 20)[1] or low <= ta.lowest(low, 20)[1] ? 18.0 : 0.0
+rcTransition += rcHoldingOutside ? 15.0 : 0.0
+rcTransition += math.abs(ema50Slope) > math.abs(nz(ema50Slope[5], 0)) and math.abs(ema50Slope) > 0.02 ? 12.0 : 0.0
+rcTransition += (mtfBullCount == 2 or mtfBearCount == 2) and mtfBullCount < 3 and mtfBearCount < 3 ? 8.0 : 0.0
+rcTransition += math.abs(bullScore - nz(bullScore[5], bullScore)) > 15 ? 9.0 : 0.0
 rcTransition := math.min(rcTransition, 100.0)
+
+float rcConfidence = math.max(math.max(rcBullTrend, rcBearTrend), math.max(rcRange, rcTransition))
 
 string rcState = "NO_TRADE"
 color rcStateCol = color.gray
 if rcBullTrend >= 60 and rcBullTrend > rcBearTrend + 15 and rcBullTrend > rcRange
     rcState := "BULL_TREND"
     rcStateCol := color.new(#00E676, 0)
+    rcConfidence := rcBullTrend
 else if rcBearTrend >= 60 and rcBearTrend > rcBullTrend + 15 and rcBearTrend > rcRange
     rcState := "BEAR_TREND"
     rcStateCol := color.new(#FF1744, 0)
+    rcConfidence := rcBearTrend
 else if rcRange >= 55 and rcRange >= math.max(rcBullTrend, rcBearTrend) - 10
     rcState := "RANGE"
     rcStateCol := color.new(#2979FF, 0)
+    rcConfidence := rcRange
 else if rcTransition >= 45 and rcBullTrend < 60 and rcBearTrend < 60 and rcRange < 55
     rcState := "TRANSITION"
     rcStateCol := color.new(#FFC107, 0)
+    rcConfidence := rcTransition
 
 // ══════════════════════════════════════════════════════════
 //  ATR-NORMALIZED VP PROXIMITY
@@ -1995,30 +2031,38 @@ if showTbl and barstate.islast and not na(tbl)
     for c = 0 to 4
         table.cell(tbl, c, 36, "", text_size=size.tiny)
 
-    // Row 37 — V4.1 Regime Classifier Header
-    table.cell(tbl, 0, 37, "V4.1", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 37, rcState, text_color=rcStateCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 37, "vs " + regime, text_color=regimeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 37, "OBSERVE", text_color=color.new(#FFC107, 0), text_size=size.tiny, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 4, 37, "", text_size=size.small, bgcolor=hBg)
+    // Row 37 — V4.1 Market State Header
+    table.cell(tbl, 0, 37, "MARKET STATE", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 37, "", text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 2, 37, "", text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 3, 37, "V4.1", text_color=color.new(#FFC107, 0), text_size=size.tiny, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 4, 37, "OBSERVE", text_color=color.new(#8b949e, 0), text_size=size.tiny, bgcolor=hBg, text_halign=text.align_center)
 
     // Row 38 — Bull/Bear Trend Scores
     color rcBullCol = rcBullTrend >= 60 ? color.new(#00E676, 0) : rcBullTrend >= 40 ? color.new(#FFC107, 0) : mFg
     color rcBearCol = rcBearTrend >= 60 ? color.new(#FF1744, 0) : rcBearTrend >= 40 ? color.new(#FFC107, 0) : mFg
-    table.cell(tbl, 0, 38, "Trend", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 38, "Bull:" + str.tostring(rcBullTrend, "#"), text_color=rcBullCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 38, "Bear:" + str.tostring(rcBearTrend, "#"), text_color=rcBearCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 38, "", text_size=size.small)
+    table.cell(tbl, 0, 38, "Bull Trend", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 38, str.tostring(rcBullTrend, "#"), text_color=rcBullCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 38, "Bear Trend", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 3, 38, str.tostring(rcBearTrend, "#"), text_color=rcBearCol, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 4, 38, "", text_size=size.small)
 
     // Row 39 — Range/Transition Scores
     color rcRngCol = rcRange >= 55 ? color.new(#2979FF, 0) : rcRange >= 35 ? color.new(#FFC107, 0) : mFg
     color rcTrnCol = rcTransition >= 45 ? color.new(#FFC107, 0) : mFg
-    table.cell(tbl, 0, 39, "State", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 39, "Rng:" + str.tostring(rcRange, "#"), text_color=rcRngCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 39, "Trn:" + str.tostring(rcTransition, "#"), text_color=rcTrnCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 39, "", text_size=size.small)
+    table.cell(tbl, 0, 39, "Range", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 39, str.tostring(rcRange, "#"), text_color=rcRngCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 39, "Transition", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 3, 39, str.tostring(rcTransition, "#"), text_color=rcTrnCol, text_size=size.small, text_halign=text.align_center)
     table.cell(tbl, 4, 39, "", text_size=size.small)
+
+    // Row 40 — Final State + Confidence
+    color rcConfCol = rcConfidence >= 70 ? color.new(#00E676, 0) : rcConfidence >= 55 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(tbl, 0, 40, "Final State", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 40, rcState, text_color=rcStateCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 2, 40, str.tostring(rcConfidence, "#") + "/100", text_color=rcConfCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 3, 40, "vs " + regime, text_color=regimeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 4, 40, "", text_size=size.small, bgcolor=hBg)
 
 // ══════════════════════════════════════════════════════════
 //  ALERTS (BUY & SELL — rich dynamic messages)
