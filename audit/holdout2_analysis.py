@@ -62,6 +62,11 @@ HOLDOUT2_FILES = {
     "EURAUD_H2": ("OANDA_EURAUD_240.csv", "Active TP2"),
     "EURCAD_H2": ("OANDA_EURCAD_240.csv", "Active TP2"),
     "EURJPY_H2": ("OANDA_EURJPY_240.csv", "Active TP2"),
+    "EURNZD_H2": ("OANDA_EURNZD_240.csv", "Active TP2"),
+    "EURCHF_H2": ("OANDA_EURCHF_240.csv", "Active TP2"),
+    "GBPUSD_H2": ("OANDA_GBPUSD_240.csv", "Active TP2"),
+    "USDCAD_H2": ("OANDA_USDCAD_240.csv", "Active TP2"),
+    "NZDUSD_H2": ("OANDA_NZDUSD_240.csv", "Active TP2"),
 }
 
 N_SIMS = 10000
