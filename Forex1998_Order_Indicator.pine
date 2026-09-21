@@ -1056,6 +1056,18 @@ if buyTrig
 if sellTrig
     lastSellBar := bar_index
 
+// ── Blocked Signal Detection (permission vetoed a would-be signal) ──
+bool v11_buy_noPerm = (v11_buy_classic or v11_buy_poc or v11_buy_pattern or v11_buy_confluence or v11_buy_divergence) and sessPass and volOK
+bool v11_sell_noPerm = (v11_sell_classic or v11_sell_poc or v11_sell_pattern or v11_sell_confluence or v11_sell_divergence) and sessPass and volOK
+bool buyBlockedByPerm = v11_buy_noPerm and not htfBuyPass and not vetoed and barstate.isconfirmed
+bool sellBlockedByPerm = v11_sell_noPerm and not htfSellPass and not vetoed and barstate.isconfirmed
+
+// ── Permission Change Detection ──
+bool permChanged = bar_index > 0 and tradePermission != tradePermission[1]
+
+// ── Hard Consistency Guard ──
+bool stateConflict = (rcState == "BEAR_TREND" and tradePermission == "LONG_ONLY") or (rcState == "BULL_TREND" and tradePermission == "SHORT_ONLY")
+
 // ── Signal count tracking ──
 var int sigBuyCount = 0
 var int sigSellCount = 0
@@ -1832,15 +1844,33 @@ plot(showSL and not na(activeSellTP) ? activeSellTP : na, "Sell TP2", color.new(
 plot(showSL and not na(activeSellTP1) ? activeSellTP1 : na, "Sell TP1", color.new(#EF5350, 70), 1, plot.style_linebr)
 plot(showSL and not na(activeSellTP3) ? activeSellTP3 : na, "Sell TP3", color.new(#FF9800, 60), 1, plot.style_linebr)
 
-// Regime background
-bgcolor(showBg ? (regime == "BULL" ? color.new(#00E676, 94) : regime == "BEAR" ? color.new(#FF1744, 94) : regime == "RANGE" ? color.new(#2979FF, 96) : na) : na, title="Regime Tint")
+// Regime background — driven by rcState (V4.1), not legacy regime
+color rcBgColor = rcState == "BULL_TREND" ? color.new(#00E676, 94) : rcState == "BEAR_TREND" ? color.new(#FF1744, 94) : rcState == "RANGE" ? color.new(#2979FF, 96) : rcState == "TRANSITION" ? color.new(#FFC107, 96) : rcState == "NO_TRADE" ? color.new(#8b949e, 96) : na
+color conflictBg = alignment == "CONFLICT" ? color.new(#FF9800, 92) : na
+bgcolor(showBg ? (not na(conflictBg) ? conflictBg : rcBgColor) : na, title="Regime Tint")
 
-// V4.1 classifier state change marker (rcStateChanged defined in V4.1b block)
+// V4.1 regime state-change labels (only at transitions, not every bar)
 plotshape(rcStateChanged and rcState == "BULL_TREND", "RC Bull", shape.triangleup, location.bottom, color.new(#00E676, 50), size=size.tiny)
 plotshape(rcStateChanged and rcState == "BEAR_TREND", "RC Bear", shape.triangledown, location.bottom, color.new(#FF1744, 50), size=size.tiny)
 plotshape(rcStateChanged and rcState == "RANGE", "RC Range", shape.diamond, location.bottom, color.new(#2979FF, 50), size=size.tiny)
 plotshape(rcStateChanged and rcState == "TRANSITION", "RC Trans", shape.cross, location.bottom, color.new(#FFC107, 50), size=size.tiny)
 plotshape(rcStateChanged and rcState == "NO_TRADE", "RC NoTrade", shape.xcross, location.bottom, color.new(#8b949e, 50), size=size.tiny)
+
+// Permission-change markers (shows when tradePermission shifts)
+plotshape(permChanged and tradePermission == "LONG_ONLY", "Perm Long", shape.arrowup, location.bottom, color.new(#00E676, 20), size=size.tiny, text="LONG ONLY", textcolor=color.new(#00E676, 20))
+plotshape(permChanged and tradePermission == "SHORT_ONLY", "Perm Short", shape.arrowdown, location.bottom, color.new(#FF1744, 20), size=size.tiny, text="SHORT ONLY", textcolor=color.new(#FF1744, 20))
+plotshape(permChanged and tradePermission == "BOTH", "Perm Both", shape.arrowup, location.bottom, color.new(#2979FF, 20), size=size.tiny, text="BOTH", textcolor=color.new(#2979FF, 20))
+plotshape(permChanged and tradePermission == "NONE", "Perm None", shape.xcross, location.bottom, color.new(#8b949e, 20), size=size.tiny, text="BLOCKED", textcolor=color.new(#8b949e, 20))
+
+// CONFLICT marker — macro bias contradicts rcState direction
+plotshape(alignment == "CONFLICT" and alignment[1] != "CONFLICT", "Conflict On", shape.flag, location.abovebar, color.new(#FF9800, 0), size=size.small, text="CONFLICT", textcolor=color.new(#FF9800, 0))
+
+// Blocked signals — would have fired but permission says no
+plotshape(buyBlockedByPerm, "Buy Blocked", shape.xcross, location.belowbar, color.new(#00E676, 40), size=size.tiny, text="BUY\nBLOCKED", textcolor=color.new(#8b949e, 0))
+plotshape(sellBlockedByPerm, "Sell Blocked", shape.xcross, location.abovebar, color.new(#FF1744, 40), size=size.tiny, text="SELL\nBLOCKED", textcolor=color.new(#8b949e, 0))
+
+// Hard consistency guard — should never happen
+plotshape(stateConflict, "State Conflict", shape.flag, location.abovebar, color.new(#FF0000, 0), size=size.normal, text="STATE\nCONFLICT", textcolor=color.new(#FF0000, 0))
 
 // Divergence markers (bullish = buy signal, bearish = caution warning)
 plotshape(showDivMark and bullDiv and (nearSup or nearPOC), "Bull Divergence", shape.diamond, location.belowbar, color.new(#00BCD4, 0), size=size.tiny)
@@ -1877,6 +1907,34 @@ if barstate.islast and showPnd
         lPSm := label.new(bar_index + 8, moVAH, "PEND SELL (Mo)\n" + str.tostring(moVAH, format.mintick), xloc.bar_index, yloc.price, color.new(#D32F2F, 0), label.style_label_down, color.white, size.small)
     if pendSellUnt and not na(nearUntResPrice)
         lPSu := label.new(bar_index + 13, nearUntResPrice, "PEND SELL (Unt)\n" + str.tostring(nearUntResPrice, format.mintick), xloc.bar_index, yloc.price, color.new(#B71C1C, 0), label.style_label_down, color.white, size.small)
+
+// ── Next Opportunity levels on chart (V4.1D) ──
+var line nxEntryLine = na
+var line nxSLLine    = na
+var line nxTP1Line   = na
+var line nxTP2Line   = na
+var label nxLabel    = na
+
+bool nxIsAction = nxAction == "BUY_LIMIT" or nxAction == "SELL_LIMIT" or nxAction == "BUY_STOP" or nxAction == "SELL_STOP"
+bool nxIsBuy = nxAction == "BUY_LIMIT" or nxAction == "BUY_STOP"
+color nxLineCol = nxIsBuy ? color.new(#00E676, 30) : color.new(#FF1744, 30)
+
+if barstate.islast
+    line.delete(nxEntryLine)
+    line.delete(nxSLLine)
+    line.delete(nxTP1Line)
+    line.delete(nxTP2Line)
+    label.delete(nxLabel)
+
+    if nxIsAction and not na(nxEntry)
+        nxEntryLine := line.new(bar_index - 10, nxEntry, bar_index + 20, nxEntry, xloc.bar_index, extend.none, nxLineCol, line.style_dashed, 2)
+        nxLabel := label.new(bar_index + 21, nxEntry, nxAction + "\n" + str.tostring(nxEntry, format.mintick), xloc.bar_index, yloc.price, nxLineCol, nxIsBuy ? label.style_label_left : label.style_label_left, color.white, size.small)
+        if not na(nxSL)
+            nxSLLine := line.new(bar_index - 5, nxSL, bar_index + 20, nxSL, xloc.bar_index, extend.none, color.new(#FF1744, 50), line.style_dotted, 1)
+        if not na(nxTP1)
+            nxTP1Line := line.new(bar_index - 5, nxTP1, bar_index + 20, nxTP1, xloc.bar_index, extend.none, color.new(#00E676, 60), line.style_dotted, 1)
+        if not na(nxTP2)
+            nxTP2Line := line.new(bar_index - 5, nxTP2, bar_index + 20, nxTP2, xloc.bar_index, extend.none, color.new(#00E676, 40), line.style_dotted, 1)
 
 // ── Untested monthly VP levels ──
 var line[] untVAHlines = array.new_line(0)
