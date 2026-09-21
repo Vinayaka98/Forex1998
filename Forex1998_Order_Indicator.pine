@@ -1598,7 +1598,7 @@ plot(showSL and not na(activeSellTP3) ? activeSellTP3 : na, "Sell TP3", color.ne
 bgcolor(showBg ? (regime == "BULL" ? color.new(#00E676, 94) : regime == "BEAR" ? color.new(#FF1744, 94) : regime == "RANGE" ? color.new(#2979FF, 96) : na) : na, title="Regime Tint")
 
 // V4.1 classifier state change marker
-bool rcStateChanged = rcState != nz(rcState[1], rcState)
+bool rcStateChanged = bar_index > 0 and rcState != rcState[1]
 plotshape(rcStateChanged and rcState == "BULL_TREND", "RC Bull", shape.triangleup, location.bottom, color.new(#00E676, 50), size=size.tiny)
 plotshape(rcStateChanged and rcState == "BEAR_TREND", "RC Bear", shape.triangledown, location.bottom, color.new(#FF1744, 50), size=size.tiny)
 plotshape(rcStateChanged and rcState == "RANGE", "RC Range", shape.diamond, location.bottom, color.new(#2979FF, 50), size=size.tiny)
