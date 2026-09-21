@@ -1929,6 +1929,288 @@ if barstate.islast and showVP
                         array.push(vpBoxes, box.new(dnStart, rowHi, dnStart + dnW, rowLo, border_color=na, bgcolor=color.new(#EF5350, 40)))
 
 // ══════════════════════════════════════════════════════════
+//  DASHBOARD FUNCTIONS (extracted to reduce main body size)
+// ══════════════════════════════════════════════════════════
+
+drawDashAnalysis(table t, color _hBg, color _hFg, color _dFg, color _mFg) =>
+    table.cell(t, 0, 0, "F98", text_color=_hFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    string verLabel = useV4 ? "V4A+V2+SE" : (useV2 ? (useStaleExit ? "V3+V2+SE" : "V3+V2") : "V3 BUY")
+    table.cell(t, 1, 0, verLabel, text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 2, 0, stratMode == "AUTO" ? regime : stratMode, text_color=regimeCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 3, 0, "BUY & SELL", text_color=color.new(#00BCD4, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    string activeGrade = buyTrig ? buyGrade : sellTrig ? sellGrade : ""
+    color activeGradeCol = buyTrig ? gradeCol(buyGrade) : sellTrig ? gradeCol(sellGrade) : _mFg
+    table.cell(t, 4, 0, activeGrade, text_color=activeGradeCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    string mtfDetail = (moBullMTF ? "M+" : moBearMTF ? "M-" : "M~") + " " + (twBullMTF ? "2W+" : twBearMTF ? "2W-" : "2W~") + " " + (wkBullMTF ? "W+" : wkBearMTF ? "W-" : "W~") + " " + (dlyBullMTF ? "D+" : dlyBearMTF ? "D-" : "D~")
+    table.cell(t, 0, 1, "Regime", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 1, regime, text_color=regimeCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 1, "Bull:" + str.tostring(bullScore, "#"), text_color=_mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 1, "MTF:" + htfBias, text_color=htfBull ? color.new(#00E676, 0) : htfBear ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 1, mtfDetail, text_color=_mFg, text_size=size.tiny, text_halign=text.align_left)
+    table.cell(t, 0, 2, "Oscillators", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 2, oscR, text_color=ratingCol(oscR), text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 2, str.tostring(oscBuy) + "B " + str.tostring(oscNeut) + "N " + str.tostring(oscSell) + "S", text_color=_mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 2, "", text_size=size.small)
+    table.cell(t, 4, 2, "", text_size=size.small)
+    table.cell(t, 0, 3, "Moving Avg", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 3, maR, text_color=ratingCol(maR), text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 3, str.tostring(maBuy) + "B " + str.tostring(maNeut) + "N " + str.tostring(maSell) + "S", text_color=_mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 3, "", text_size=size.small)
+    table.cell(t, 4, 3, "", text_size=size.small)
+    table.cell(t, 0, 4, "SUMMARY", text_color=_hFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 1, 4, totR, text_color=ratingCol(totR), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 2, 4, str.tostring(score, "#.##"), text_color=ratingCol(totR), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 3, 4, sessState, text_color=inOverlap ? color.new(#00E676, 0) : inLondon or inNY ? color.new(#26A69A, 0) : color.new(#EF5350, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 4, 4, "", text_size=size.small, bgcolor=_hBg)
+    float activeQual = buyTrig ? qualBuy : qualityCalcBuy(regime, nearestSup)
+    color qCol = activeQual >= 75 ? color.new(#00E676, 0) : activeQual >= 65 ? color.new(#26A69A, 0) : activeQual >= 50 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(t, 0, 5, "Quality", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 5, str.tostring(activeQual, "#") + "/100", text_color=qCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 5, "Min:" + str.tostring(adjMinQualBuy, "#") + (adjMinQualBuy < minQuality ? "*" : ""), text_color=adjMinQualBuy < minQuality ? color.new(#FFC107, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 5, activeQual >= adjMinQualBuy ? "PASS" : "FAIL", text_color=activeQual >= adjMinQualBuy ? color.new(#00E676, 0) : color.new(#FF1744, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 5, "", text_size=size.small)
+    color rrCol = rrBuy >= 2.5 ? color.new(#00E676, 0) : rrBuy >= 2.0 ? color.new(#26A69A, 0) : rrBuy >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(t, 0, 6, "R:R", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 6, str.tostring(rrBuy, "#.#") + "R", text_color=rrCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 6, "Min:" + str.tostring(rrMin, "#.#"), text_color=_mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 6, rrBuy >= rrMin ? "PASS" : "FAIL", text_color=rrBuy >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 6, "", text_size=size.small)
+    table.cell(t, 0, 7, "Confidence", text_color=color.new(#FFC107, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 1, 7, buyGrade + "/" + sellGrade, text_color=gradeCol(buyGrade), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 2, 7, str.tostring(buyConfCount) + "B/" + str.tostring(sellConfCount) + "S", text_color=_mFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    string confDetail = (bullDiv ? "BD " : "") + (bearDiv ? "SD " : "") + (volSpike ? "VOL " : "") + (bullPattern ? "BP " : "") + (bearPattern ? "SP " : "")
+    table.cell(t, 3, 7, confDetail, text_color=color.new(#00BCD4, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 4, 7, "", text_size=size.small, bgcolor=_hBg)
+    table.cell(t, 0, 8, "V11 Sig", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    string v11Status = (oscOversold ? "OS " : "") + (oscOverbought ? "OB " : "") + (nearSup ? "SUP " : "") + (nearRes ? "RES " : "") + (momBullish ? "M+ " : "") + (momBearish ? "M- " : "") + (bullDiv ? "BD " : "") + (bearDiv ? "SD " : "")
+    if v11Status == ""
+        v11Status := "---"
+    color v11Col = v11_buy ? color.new(#00E676, 0) : v11_sell ? color.new(#FF1744, 0) : _mFg
+    table.cell(t, 1, 8, v11Status, text_color=v11Col, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 8, "RSI:" + str.tostring(rsiV, "#") + " K:" + str.tostring(rawK, "#"), text_color=_mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 8, "WR:" + str.tostring(wrV, "#"), text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 8, v11_buy ? "BUY" : v11_sell ? "SELL" : "", text_color=v11Col, text_size=size.small, text_halign=text.align_center)
+    color volCol = volState == "NORMAL" ? color.new(#00E676, 0) : volState == "ELEVATED" ? color.new(#FFC107, 0) : color.new(#FF1744, 0)
+    string divText = strongBullDiv ? "STRONG BULL" : bullDiv ? "BULL DIV" : bearDiv ? "CAUTION" : "NONE"
+    color divCol = bullDiv or strongBullDiv ? color.new(#00BCD4, 0) : bearDiv ? color.new(#FF9800, 0) : _mFg
+    table.cell(t, 0, 9, "Vol|Div", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 9, volState + " " + str.tostring(atrRatio, "#.#") + "x", text_color=volCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 9, divText, text_color=divCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 9, "", text_size=size.small)
+    table.cell(t, 4, 9, "", text_size=size.small)
+    string vetoText = vetoTransition ? "TRANSITION" : vetoATR ? "ATR" : not sessPass ? "SESSION" : not volOK ? "VOLATILITY" : vetoEURAUD ? "EURAUD" : vetoRegime ? "REGIME" : "NONE"
+    bool anyVeto = vetoed or not sessPass or not volOK or vetoEURAUD or vetoRegime
+    table.cell(t, 0, 10, "Vetoes", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 10, vetoText, text_color=anyVeto ? color.new(#FF1744, 0) : color.new(#00E676, 0), text_size=size.small, text_halign=text.align_center)
+    string v2Status = not useV2 ? "V2 OFF" : vetoEURAUD ? "EURAUD" : vetoRegime ? "HiATR+LoADX" : not v2BuyReset ? "WAIT RESET" : "V2 PASS"
+    color v2Col = not useV2 ? _mFg : (vetoEURAUD or vetoRegime or not v2BuyReset) ? color.new(#FF9800, 0) : color.new(#00E676, 0)
+    table.cell(t, 2, 10, v2Status, text_color=v2Col, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 10, "ATR:" + str.tostring(atrPctRank, "#") + "% ADX:" + str.tostring(adxV, "#.#"), text_color=vetoRegime ? color.new(#FF9800, 0) : _mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 10, "", text_size=size.small)
+    table.cell(t, 0, 11, "Signal", text_color=_hFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 1, 11, sigText, text_color=sigCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    int totalTrades = winCount + lossCount
+    float winRate = totalTrades > 0 ? winCount * 100.0 / totalTrades : 0.0
+    table.cell(t, 2, 11, str.tostring(sigBuyCount) + "B/" + str.tostring(sigSellCount) + "S", text_color=_mFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 3, 11, totalTrades > 0 ? str.tostring(winCount) + "W/" + str.tostring(lossCount) + "L " + str.tostring(winRate, "#") + "%" : "", text_color=winRate >= 45 ? color.new(#00E676, 0) : winRate > 0 ? color.new(#FFC107, 0) : _mFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 4, 11, "", text_size=size.small, bgcolor=_hBg)
+    true
+
+drawDashVP(table t, color _hBg, color _hFg, color _dFg, color _mFg) =>
+    table.cell(t, 0, 12, "Wk VAH", text_color=color.new(#EF5350, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 12, not na(wkVAH) ? str.tostring(wkVAH, format.mintick) : "—", text_color=_dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 12, str.tostring(distWkVAH, "#.#") + " ATR", text_color=nearWkVAH ? color.new(#FF9800, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 12, nearWkVAH_sell ? "SELL ZONE" : nearWkVAH ? "TP ZONE" : "", text_color=nearWkVAH_sell ? color.new(#FF1744, 0) : color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 12, "", text_size=size.small)
+    table.cell(t, 0, 13, "Wk POC", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 13, not na(wkPOC) ? str.tostring(wkPOC, format.mintick) : "—", text_color=_dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 13, str.tostring(distWkPOC, "#.#") + " ATR", text_color=nearWkPOC ? color.new(#FF9800, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 13, "", text_size=size.small)
+    table.cell(t, 4, 13, "", text_size=size.small)
+    table.cell(t, 0, 14, "Wk VAL", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 14, not na(wkVAL) ? str.tostring(wkVAL, format.mintick) : "—", text_color=_dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 14, str.tostring(distWkVAL, "#.#") + " ATR", text_color=nearWkVAL ? color.new(#FF9800, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 14, nearWkVAL ? "BUY ZONE" : "", text_color=color.new(#00E676, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 14, "", text_size=size.small)
+    table.cell(t, 0, 15, "Mo VAH", text_color=color.new(#EF5350, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 15, not na(moVAH) ? str.tostring(moVAH, format.mintick) : "—", text_color=_dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 15, str.tostring(distMoVAH, "#.#") + " ATR", text_color=nearMoVAH ? color.new(#FF9800, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 15, nearMoVAH_sell ? "SELL ZONE" : nearMoVAH ? "TP ZONE" : "", text_color=nearMoVAH_sell ? color.new(#FF1744, 0) : color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 15, "", text_size=size.small)
+    table.cell(t, 0, 16, "Mo POC", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 16, not na(moPOC) ? str.tostring(moPOC, format.mintick) : "—", text_color=_dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 16, str.tostring(distMoPOC, "#.#") + " ATR", text_color=nearMoPOC ? color.new(#FF9800, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 16, "", text_size=size.small)
+    table.cell(t, 4, 16, "", text_size=size.small)
+    table.cell(t, 0, 17, "Mo VAL", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 17, not na(moVAL) ? str.tostring(moVAL, format.mintick) : "—", text_color=_dFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 17, str.tostring(distMoVAL, "#.#") + " ATR", text_color=nearMoVAL ? color.new(#FF9800, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 17, nearMoVAL ? "BUY ZONE" : "", text_color=color.new(#00E676, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 17, "", text_size=size.small)
+    for c = 0 to 4
+        table.cell(t, c, 18, "", text_size=size.tiny)
+    true
+
+drawDashPosition(table t, color _hBg, color _hFg, color _dFg, color _mFg) =>
+    color lifecycleCol = setupStatus == "FILLED" ? color.new(#00E676, 0) : setupStatus == "CANDIDATE" ? color.new(#FFC107, 0) : setupStatus == "PENDING" ? color.new(#2979FF, 0) : setupStatus == "MISSED" ? color.new(#FF1744, 0) : setupStatus == "EXPIRED" ? color.new(#FF5722, 0) : _mFg
+    table.cell(t, 0, 19, "POSITION", text_color=_hFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 1, 19, dispType, text_color=dispTypeCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    string dirLabel = tradeDir != "" ? tradeDir : "---"
+    color dirCol = tradeDir == "BUY" ? color.new(#00E676, 0) : tradeDir == "SELL" ? color.new(#FF1744, 0) : _mFg
+    table.cell(t, 2, 19, dirLabel, text_color=dirCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 3, 19, setupStatus, text_color=lifecycleCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 4, 19, tp1Hit or sellTp1Hit ? "TP1 HIT" : "", text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    float activePL = not na(activeEntryPrice) ? close - activeEntryPrice : not na(activeSellEntryPrice) ? activeSellEntryPrice - close : na
+    table.cell(t, 0, 20, "Entry", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 20, not na(dispEntry) ? str.tostring(dispEntry, format.mintick) : "—", text_color=not na(dispEntry) ? color.new(#FFC107, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 20, not na(activePL) ? (activePL >= 0 ? "+" : "") + str.tostring(activePL / syminfo.mintick, "#") + " pips" : "—", text_color=not na(activePL) ? (activePL >= 0 ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : _mFg, text_size=size.small, text_halign=text.align_center)
+    int activeBars = not na(activeEntry) ? bar_index - activeEntry : not na(activeSellEntry) ? bar_index - activeSellEntry : 0
+    table.cell(t, 3, 20, activeBars > 0 ? str.tostring(activeBars) + " bars" : "", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 20, "", text_size=size.small)
+    float slATRdist = not na(dispSL) and atrV > 0 ? math.abs(close - dispSL) / atrV : na
+    table.cell(t, 0, 21, "Stop Loss", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 21, not na(dispSL) ? str.tostring(dispSL, format.mintick) : "—", text_color=not na(dispSL) ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 21, not na(slATRdist) ? str.tostring(slATRdist, "#.#") + " ATR" : "", text_color=_mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 21, exitMode == "Adaptive_Trail" and hasActiveTrade ? "TRAILING" : "", text_color=color.new(#00BCD4, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 4, 21, "", text_size=size.small)
+    table.cell(t, 0, 22, "TP1 (1R)", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 22, not na(dispTP1d) ? str.tostring(dispTP1d, format.mintick) : "—", text_color=not na(dispTP1d) ? color.new(#00E676, 70) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 22, tp1Hit or sellTp1Hit ? "HIT" : "", text_color=color.new(#00E676, 0), text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 22, "", text_size=size.small)
+    table.cell(t, 4, 22, "", text_size=size.small)
+    table.cell(t, 0, 23, "TP2 (2R)", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 23, not na(dispTP2d) ? str.tostring(dispTP2d, format.mintick) : "—", text_color=not na(dispTP2d) ? color.new(#00E676, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 23, "", text_size=size.small)
+    table.cell(t, 3, 23, "", text_size=size.small)
+    table.cell(t, 4, 23, "", text_size=size.small)
+    table.cell(t, 0, 24, "TP3 (VP)", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 24, not na(dispTP3d) ? str.tostring(dispTP3d, format.mintick) : "—", text_color=not na(dispTP3d) ? color.new(#00BCD4, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 24, "", text_size=size.small)
+    table.cell(t, 3, 24, "", text_size=size.small)
+    table.cell(t, 4, 24, "", text_size=size.small)
+    color dispRRCol = not na(dispRR) and dispRR >= 2.5 ? color.new(#00E676, 0) : not na(dispRR) and dispRR >= 2.0 ? color.new(#26A69A, 0) : not na(dispRR) and dispRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(t, 0, 25, "Exp. R:R", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 25, not na(dispRR) ? str.tostring(dispRR, "#.#") + "R" : "—", text_color=not na(dispRR) ? dispRRCol : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 25, not na(dispRR) ? (dispRR >= rrMin ? "PASS" : "FAIL") : "", text_color=not na(dispRR) ? (dispRR >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 25, "", text_size=size.small)
+    table.cell(t, 4, 25, "", text_size=size.small)
+    table.cell(t, 0, 26, "Size", text_color=color.new(#FFC107, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 1, 26, stdLots > 0 ? str.tostring(stdLots, "#.##") + " lots" : "—", text_color=stdLots > 0 ? color.new(#00BCD4, 0) : _mFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 2, 26, stopPips > 0 ? str.tostring(stopPips, "#") + " pip SL" : "", text_color=_mFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 3, 26, "$" + str.tostring(riskAmt, "#.##") + " risk", text_color=_mFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 4, 26, "", text_size=size.small, bgcolor=_hBg)
+    table.cell(t, 0, 27, "Untested", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 27, "S:" + (not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "—"), text_color=nearUntSup ? color.new(#00E676, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 27, "R:" + (not na(nearUntResPrice) ? str.tostring(nearUntResPrice, format.mintick) : "—"), text_color=nearUntRes ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 27, str.tostring(array.size(untVAL)) + "s/" + str.tostring(array.size(untVAH)) + "r", text_color=_mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 27, "", text_size=size.small)
+    for c = 0 to 4
+        table.cell(t, c, 28, "", text_size=size.tiny)
+    bool anyPend = hasPending or hasPendingSell
+    table.cell(t, 0, 29, "LIMITS", text_color=anyPend ? _hFg : color.new(#30363d, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 1, 29, anyPend ? str.tostring(pendCount + pendSellCount) + " pending" : "", text_color=anyPend ? color.new(#2979FF, 0) : color.new(#30363d, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 2, 29, "Entry", text_color=hasPending ? _mFg : color.new(#30363d, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 3, 29, "SL / Lots", text_color=hasPending ? _mFg : color.new(#30363d, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 4, 29, "Away", text_color=hasPending ? _mFg : color.new(#30363d, 0), text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 0, 30, "Wk VAL", text_color=pendBuyWk ? color.new(#26A69A, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 30, pendBuyWk ? "BUY LIMIT" : "", text_color=pendBuyWk ? color.new(#2979FF, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 30, pendBuyWk and not na(wkVAL) ? str.tostring(wkVAL, format.mintick) : "", text_color=pendBuyWk ? color.new(#FFC107, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 30, pendBuyWk and not na(pendWkSL) ? str.tostring(pendWkSL, format.mintick) + " / " + str.tostring(nz(pendWkLots, 0), "#.##") + "L" : "", text_color=pendBuyWk ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 30, pendBuyWk and not na(pendWkPipsAway) ? str.tostring(pendWkPipsAway, "#") + "p" : "", text_color=pendBuyWk ? _dFg : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 0, 31, "Mo VAL", text_color=pendBuyMo ? color.new(#26A69A, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 31, pendBuyMo ? "BUY LIMIT" : "", text_color=pendBuyMo ? color.new(#2979FF, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 31, pendBuyMo and not na(moVAL) ? str.tostring(moVAL, format.mintick) : "", text_color=pendBuyMo ? color.new(#FFC107, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 31, pendBuyMo and not na(pendMoSL) ? str.tostring(pendMoSL, format.mintick) + " / " + str.tostring(nz(pendMoLots, 0), "#.##") + "L" : "", text_color=pendBuyMo ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 31, pendBuyMo and not na(pendMoPipsAway) ? str.tostring(pendMoPipsAway, "#") + "p" : "", text_color=pendBuyMo ? _dFg : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 0, 32, "Unt Sup", text_color=pendBuyUnt ? color.new(#26A69A, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 32, pendBuyUnt ? "BUY LIMIT" : "", text_color=pendBuyUnt ? color.new(#2979FF, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 32, pendBuyUnt and not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "", text_color=pendBuyUnt ? color.new(#FFC107, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 32, pendBuyUnt and not na(pendUntSL) ? str.tostring(pendUntSL, format.mintick) + " / " + str.tostring(nz(pendUntLots, 0), "#.##") + "L" : "", text_color=pendBuyUnt ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 32, pendBuyUnt and not na(pendUntPipsAway) ? str.tostring(pendUntPipsAway, "#") + "p" : "", text_color=pendBuyUnt ? _dFg : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 0, 33, "Wk VAH", text_color=pendSellWk ? color.new(#EF5350, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 33, pendSellWk ? "SELL LIMIT" : "", text_color=pendSellWk ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 33, pendSellWk and not na(wkVAH) ? str.tostring(wkVAH, format.mintick) : "", text_color=pendSellWk ? color.new(#FFC107, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 33, pendSellWk and not na(pendSellWkSL) ? str.tostring(pendSellWkSL, format.mintick) + " / " + str.tostring(nz(pendSellWkLots, 0), "#.##") + "L" : "", text_color=pendSellWk ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 33, pendSellWk and not na(pendSellWkPipsAway) ? str.tostring(pendSellWkPipsAway, "#") + "p" : "", text_color=pendSellWk ? _dFg : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 0, 34, "Mo VAH", text_color=pendSellMo ? color.new(#EF5350, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 34, pendSellMo ? "SELL LIMIT" : "", text_color=pendSellMo ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 34, pendSellMo and not na(moVAH) ? str.tostring(moVAH, format.mintick) : "", text_color=pendSellMo ? color.new(#FFC107, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 34, pendSellMo and not na(pendSellMoSL) ? str.tostring(pendSellMoSL, format.mintick) + " / " + str.tostring(nz(pendSellMoLots, 0), "#.##") + "L" : "", text_color=pendSellMo ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 34, pendSellMo and not na(pendSellMoPipsAway) ? str.tostring(pendSellMoPipsAway, "#") + "p" : "", text_color=pendSellMo ? _dFg : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 0, 35, "Unt Res", text_color=pendSellUnt ? color.new(#EF5350, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 35, pendSellUnt ? "SELL LIMIT" : "", text_color=pendSellUnt ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 35, pendSellUnt and not na(nearUntResPrice) ? str.tostring(nearUntResPrice, format.mintick) : "", text_color=pendSellUnt ? color.new(#FFC107, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 3, 35, pendSellUnt and not na(pendSellUntSL) ? str.tostring(pendSellUntSL, format.mintick) + " / " + str.tostring(nz(pendSellUntLots, 0), "#.##") + "L" : "", text_color=pendSellUnt ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 35, pendSellUnt and not na(pendSellUntPipsAway) ? str.tostring(pendSellUntPipsAway, "#") + "p" : "", text_color=pendSellUnt ? _dFg : _mFg, text_size=size.small, text_halign=text.align_center)
+    true
+
+drawDashState(table t, color _hBg, color _hFg, color _dFg, color _mFg) =>
+    for c = 0 to 4
+        table.cell(t, c, 36, "", text_size=size.tiny)
+    table.cell(t, 0, 37, "MARKET STATE", text_color=_hFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 1, 37, "", text_size=size.small, bgcolor=_hBg)
+    table.cell(t, 2, 37, "", text_size=size.small, bgcolor=_hBg)
+    table.cell(t, 3, 37, "V4.1", text_color=color.new(#FFC107, 0), text_size=size.tiny, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 4, 37, "OBSERVE", text_color=color.new(#8b949e, 0), text_size=size.tiny, bgcolor=_hBg, text_halign=text.align_center)
+    color rcBullCol = rcBullTrend >= 60 ? color.new(#00E676, 0) : rcBullTrend >= 40 ? color.new(#FFC107, 0) : _mFg
+    color rcBearCol = rcBearTrend >= 60 ? color.new(#FF1744, 0) : rcBearTrend >= 40 ? color.new(#FFC107, 0) : _mFg
+    table.cell(t, 0, 38, "Bull Trend", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 38, str.tostring(rcBullTrend, "#"), text_color=rcBullCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 38, "Bear Trend", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 3, 38, str.tostring(rcBearTrend, "#"), text_color=rcBearCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 38, "", text_size=size.small)
+    color rcRngCol = rcRange >= 55 ? color.new(#2979FF, 0) : rcRange >= 35 ? color.new(#FFC107, 0) : _mFg
+    color rcTrnCol = rcTransition >= 45 ? color.new(#FFC107, 0) : _mFg
+    table.cell(t, 0, 39, "Range", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 39, str.tostring(rcRange, "#"), text_color=rcRngCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 39, "Transition", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 3, 39, str.tostring(rcTransition, "#"), text_color=rcTrnCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 39, "", text_size=size.small)
+    color rcConfCol = rcConfidence >= 70 ? color.new(#00E676, 0) : rcConfidence >= 55 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(t, 0, 40, "Final State", text_color=_hFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 1, 40, rcState, text_color=rcStateCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 2, 40, str.tostring(rcConfidence, "#") + "/100", text_color=rcConfCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 3, 40, "vs " + regime, text_color=regimeCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 4, 40, "", text_size=size.small, bgcolor=_hBg)
+    table.cell(t, 0, 41, "Macro Bias", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 41, macroBias, text_color=macroBiasCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 41, "Permission", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 3, 41, tradePermission, text_color=permCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 41, "V4.1B", text_color=color.new(#FFC107, 0), text_size=size.tiny, text_halign=text.align_center)
+    for c = 0 to 4
+        table.cell(t, c, 42, "", text_size=size.tiny)
+    bool nxIsActive = nxAction == "ACTIVE_LONG" or nxAction == "ACTIVE_SHORT"
+    table.cell(t, 0, 43, nxIsActive ? "CURRENT TRADE" : "NEXT OPPORTUNITY", text_color=_hFg, text_size=size.small, bgcolor=_hBg, text_halign=text.align_left)
+    table.cell(t, 1, 43, nxAction, text_color=nxActCol, text_size=size.small, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 2, 43, "", text_size=size.small, bgcolor=_hBg)
+    table.cell(t, 3, 43, "V4.1D", text_color=color.new(#FFC107, 0), text_size=size.tiny, bgcolor=_hBg, text_halign=text.align_center)
+    table.cell(t, 4, 43, "", text_size=size.small, bgcolor=_hBg)
+    table.cell(t, 0, 44, "NX Entry", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 44, not na(nxEntry) ? str.tostring(nxEntry, format.mintick) : "—", text_color=not na(nxEntry) ? color.new(#FFC107, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 44, "NX Stop", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 3, 44, not na(nxSL) ? str.tostring(nxSL, format.mintick) : "—", text_color=not na(nxSL) ? color.new(#FF1744, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 4, 44, "", text_size=size.small)
+    table.cell(t, 0, 45, "NX TP1", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 45, not na(nxTP1) ? str.tostring(nxTP1, format.mintick) : "—", text_color=not na(nxTP1) ? color.new(#00E676, 70) : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 2, 45, "NX TP2", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 3, 45, not na(nxTP2) ? str.tostring(nxTP2, format.mintick) : "—", text_color=not na(nxTP2) ? color.new(#00E676, 0) : _mFg, text_size=size.small, text_halign=text.align_center)
+    color nxRRCol = not na(nxRR) and nxRR >= 2.5 ? color.new(#00E676, 0) : not na(nxRR) and nxRR >= 2.0 ? color.new(#26A69A, 0) : not na(nxRR) and nxRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(t, 4, 45, not na(nxRR) ? str.tostring(nxRR, "#.#") + "R" : "", text_color=not na(nxRR) ? nxRRCol : _mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(t, 0, 46, "Reason", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 46, nxReason, text_color=nxActCol, text_size=size.tiny, text_halign=text.align_center)
+    table.cell(t, 2, 46, "", text_size=size.small)
+    table.cell(t, 3, 46, nxExpiry != "" ? nxExpiry : "", text_color=color.new(#8b949e, 0), text_size=size.tiny, text_halign=text.align_center)
+    table.cell(t, 4, 46, "", text_size=size.small)
+    string nxPrevLabel = nxBlocked != "" ? nxBlocked : prevSetupInfo != "" ? prevSetupInfo : ""
+    color nxPrevCol = nxBlocked != "" ? color.new(#FF1744, 0) : prevSetupInfo != "" ? color.new(#8b949e, 0) : _mFg
+    table.cell(t, 0, 47, nxBlocked != "" ? "Blocked" : prevSetupInfo != "" ? "Previous" : "", text_color=_mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(t, 1, 47, nxPrevLabel, text_color=nxPrevCol, text_size=size.tiny, text_halign=text.align_center)
+    table.cell(t, 2, 47, "", text_size=size.small)
+    table.cell(t, 3, 47, "", text_size=size.small)
+    table.cell(t, 4, 47, "", text_size=size.small)
+    true
+
+// ══════════════════════════════════════════════════════════
 //  DASHBOARD TABLE (BUY-focused V3)
 // ══════════════════════════════════════════════════════════
 
@@ -1941,395 +2223,10 @@ if showTbl and barstate.islast and not na(tbl)
     hFg = color.white
     dFg = color.new(#e6edf3, 0)
     mFg = color.new(#8b949e, 0)
-
-    // Row 0 — Header
-    table.cell(tbl, 0, 0, "F98", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    string verLabel = useV4 ? "V4A+V2+SE" : (useV2 ? (useStaleExit ? "V3+V2+SE" : "V3+V2") : "V3 BUY")
-    table.cell(tbl, 1, 0, verLabel, text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 0, stratMode == "AUTO" ? regime : stratMode, text_color=regimeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 0, "BUY & SELL", text_color=color.new(#00BCD4, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    string activeGrade = buyTrig ? buyGrade : sellTrig ? sellGrade : ""
-    color activeGradeCol = buyTrig ? gradeCol(buyGrade) : sellTrig ? gradeCol(sellGrade) : mFg
-    table.cell(tbl, 4, 0, activeGrade, text_color=activeGradeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-
-    // Row 1 — Regime + MTF Bias
-    string mtfDetail = (moBullMTF ? "M+" : moBearMTF ? "M-" : "M~") + " " + (twBullMTF ? "2W+" : twBearMTF ? "2W-" : "2W~") + " " + (wkBullMTF ? "W+" : wkBearMTF ? "W-" : "W~") + " " + (dlyBullMTF ? "D+" : dlyBearMTF ? "D-" : "D~")
-    table.cell(tbl, 0, 1, "Regime", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 1, regime, text_color=regimeCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 1, "Bull:" + str.tostring(bullScore, "#"), text_color=mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 1, "MTF:" + htfBias, text_color=htfBull ? color.new(#00E676, 0) : htfBear ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 1, mtfDetail, text_color=mFg, text_size=size.tiny, text_halign=text.align_left)
-
-    // Row 2 — Oscillators
-    table.cell(tbl, 0, 2, "Oscillators", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 2, oscR, text_color=ratingCol(oscR), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 2, str.tostring(oscBuy) + "B " + str.tostring(oscNeut) + "N " + str.tostring(oscSell) + "S", text_color=mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 2, "", text_size=size.small)
-    table.cell(tbl, 4, 2, "", text_size=size.small)
-
-    // Row 3 — Moving Averages
-    table.cell(tbl, 0, 3, "Moving Avg", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 3, maR, text_color=ratingCol(maR), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 3, str.tostring(maBuy) + "B " + str.tostring(maNeut) + "N " + str.tostring(maSell) + "S", text_color=mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 3, "", text_size=size.small)
-    table.cell(tbl, 4, 3, "", text_size=size.small)
-
-    // Row 4 — Summary + Session
-    table.cell(tbl, 0, 4, "SUMMARY", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 4, totR, text_color=ratingCol(totR), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 4, str.tostring(score, "#.##"), text_color=ratingCol(totR), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 4, sessState, text_color=inOverlap ? color.new(#00E676, 0) : inLondon or inNY ? color.new(#26A69A, 0) : color.new(#EF5350, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 4, 4, "", text_size=size.small, bgcolor=hBg)
-
-    // Row 5 — Quality
-    float activeQual = buyTrig ? qualBuy : qualityCalcBuy(regime, nearestSup)
-    color qCol = activeQual >= 75 ? color.new(#00E676, 0) : activeQual >= 65 ? color.new(#26A69A, 0) : activeQual >= 50 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
-    table.cell(tbl, 0, 5, "Quality", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 5, str.tostring(activeQual, "#") + "/100", text_color=qCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 5, "Min:" + str.tostring(adjMinQualBuy, "#") + (adjMinQualBuy < minQuality ? "*" : ""), text_color=adjMinQualBuy < minQuality ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 5, activeQual >= adjMinQualBuy ? "PASS" : "FAIL", text_color=activeQual >= adjMinQualBuy ? color.new(#00E676, 0) : color.new(#FF1744, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 5, "", text_size=size.small)
-
-    // Row 6 — R:R
-    color rrCol = rrBuy >= 2.5 ? color.new(#00E676, 0) : rrBuy >= 2.0 ? color.new(#26A69A, 0) : rrBuy >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
-    table.cell(tbl, 0, 6, "R:R", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 6, str.tostring(rrBuy, "#.#") + "R", text_color=rrCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 6, "Min:" + str.tostring(rrMin, "#.#"), text_color=mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 6, rrBuy >= rrMin ? "PASS" : "FAIL", text_color=rrBuy >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 6, "", text_size=size.small)
-
-    // Row 7 — Confidence Grade (Buy + Sell)
-    table.cell(tbl, 0, 7, "Confidence", text_color=color.new(#FFC107, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    string confGradeDisp = buyGrade + "/" + sellGrade
-    table.cell(tbl, 1, 7, confGradeDisp, text_color=gradeCol(buyGrade), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 7, str.tostring(buyConfCount) + "B/" + str.tostring(sellConfCount) + "S", text_color=mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    string confDetail = ""
-    confDetail += bullDiv ? "BD " : ""
-    confDetail += bearDiv ? "SD " : ""
-    confDetail += volSpike ? "VOL " : ""
-    confDetail += bullPattern ? "BP " : ""
-    confDetail += bearPattern ? "SP " : ""
-    table.cell(tbl, 3, 7, confDetail, text_color=color.new(#00BCD4, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 4, 7, "", text_size=size.small, bgcolor=hBg)
-
-    // Row 8 — V11 Buy/Sell Check
-    table.cell(tbl, 0, 8, "V11 Sig", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    string v11Status = ""
-    if oscOversold
-        v11Status += "OS "
-    if oscOverbought
-        v11Status += "OB "
-    if nearSup
-        v11Status += "SUP "
-    if nearRes
-        v11Status += "RES "
-    if momBullish
-        v11Status += "M+ "
-    if momBearish
-        v11Status += "M- "
-    if bullDiv
-        v11Status += "BD "
-    if bearDiv
-        v11Status += "SD "
-    if v11Status == ""
-        v11Status := "---"
-    color v11Col = v11_buy ? color.new(#00E676, 0) : v11_sell ? color.new(#FF1744, 0) : mFg
-    table.cell(tbl, 1, 8, v11Status, text_color=v11Col, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 8, "RSI:" + str.tostring(rsiV, "#") + " K:" + str.tostring(rawK, "#"), text_color=mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 8, "WR:" + str.tostring(wrV, "#"), text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 8, v11_buy ? "BUY" : v11_sell ? "SELL" : "", text_color=v11Col, text_size=size.small, text_halign=text.align_center)
-
-    // Row 9 — Volatility + Divergence
-    color volCol = volState == "NORMAL" ? color.new(#00E676, 0) : volState == "ELEVATED" ? color.new(#FFC107, 0) : color.new(#FF1744, 0)
-    string divText = strongBullDiv ? "STRONG BULL" : bullDiv ? "BULL DIV" : bearDiv ? "CAUTION" : "NONE"
-    color divCol = bullDiv or strongBullDiv ? color.new(#00BCD4, 0) : bearDiv ? color.new(#FF9800, 0) : mFg
-    table.cell(tbl, 0, 9, "Vol|Div", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 9, volState + " " + str.tostring(atrRatio, "#.#") + "x", text_color=volCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 9, divText, text_color=divCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 9, "", text_size=size.small)
-    table.cell(tbl, 4, 9, "", text_size=size.small)
-
-    // Row 10 — Vetoes + V2 Status
-    string vetoText = vetoTransition ? "TRANSITION" : vetoATR ? "ATR" : not sessPass ? "SESSION" : not volOK ? "VOLATILITY" : vetoEURAUD ? "EURAUD" : vetoRegime ? "REGIME" : "NONE"
-    bool anyVeto = vetoed or not sessPass or not volOK or vetoEURAUD or vetoRegime
-    table.cell(tbl, 0, 10, "Vetoes", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 10, vetoText, text_color=anyVeto ? color.new(#FF1744, 0) : color.new(#00E676, 0), text_size=size.small, text_halign=text.align_center)
-    string v2Status = not useV2 ? "V2 OFF" : vetoEURAUD ? "EURAUD" : vetoRegime ? "HiATR+LoADX" : not v2BuyReset ? "WAIT RESET" : "V2 PASS"
-    color v2Col = not useV2 ? mFg : (vetoEURAUD or vetoRegime or not v2BuyReset) ? color.new(#FF9800, 0) : color.new(#00E676, 0)
-    table.cell(tbl, 2, 10, v2Status, text_color=v2Col, text_size=size.small, text_halign=text.align_center)
-    string atrAdxInfo = "ATR:" + str.tostring(atrPctRank, "#") + "% ADX:" + str.tostring(adxV, "#.#")
-    table.cell(tbl, 3, 10, atrAdxInfo, text_color=vetoRegime ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 10, "", text_size=size.small)
-
-    // Row 11 — Signal + Win/Loss
-    table.cell(tbl, 0, 11, "Signal", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 11, sigText, text_color=sigCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    int totalTrades = winCount + lossCount
-    float winRate = totalTrades > 0 ? winCount * 100.0 / totalTrades : 0.0
-    table.cell(tbl, 2, 11, str.tostring(sigBuyCount) + "B/" + str.tostring(sigSellCount) + "S", text_color=mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 11, totalTrades > 0 ? str.tostring(winCount) + "W/" + str.tostring(lossCount) + "L " + str.tostring(winRate, "#") + "%" : "", text_color=winRate >= 45 ? color.new(#00E676, 0) : winRate > 0 ? color.new(#FFC107, 0) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 4, 11, "", text_size=size.small, bgcolor=hBg)
-
-    // Rows 12-14 — Weekly VP
-    table.cell(tbl, 0, 12, "Wk VAH", text_color=color.new(#EF5350, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 12, not na(wkVAH) ? str.tostring(wkVAH, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 12, str.tostring(distWkVAH, "#.#") + " ATR", text_color=nearWkVAH ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 12, nearWkVAH_sell ? "SELL ZONE" : nearWkVAH ? "TP ZONE" : "", text_color=nearWkVAH_sell ? color.new(#FF1744, 0) : color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 12, "", text_size=size.small)
-
-    table.cell(tbl, 0, 13, "Wk POC", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 13, not na(wkPOC) ? str.tostring(wkPOC, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 13, str.tostring(distWkPOC, "#.#") + " ATR", text_color=nearWkPOC ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 13, "", text_size=size.small)
-    table.cell(tbl, 4, 13, "", text_size=size.small)
-
-    table.cell(tbl, 0, 14, "Wk VAL", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 14, not na(wkVAL) ? str.tostring(wkVAL, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 14, str.tostring(distWkVAL, "#.#") + " ATR", text_color=nearWkVAL ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 14, nearWkVAL ? "BUY ZONE" : "", text_color=color.new(#00E676, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 14, "", text_size=size.small)
-
-    // Rows 15-17 — Monthly VP
-    table.cell(tbl, 0, 15, "Mo VAH", text_color=color.new(#EF5350, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 15, not na(moVAH) ? str.tostring(moVAH, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 15, str.tostring(distMoVAH, "#.#") + " ATR", text_color=nearMoVAH ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 15, nearMoVAH_sell ? "SELL ZONE" : nearMoVAH ? "TP ZONE" : "", text_color=nearMoVAH_sell ? color.new(#FF1744, 0) : color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 15, "", text_size=size.small)
-
-    table.cell(tbl, 0, 16, "Mo POC", text_color=color.new(#FF9800, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 16, not na(moPOC) ? str.tostring(moPOC, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 16, str.tostring(distMoPOC, "#.#") + " ATR", text_color=nearMoPOC ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 16, "", text_size=size.small)
-    table.cell(tbl, 4, 16, "", text_size=size.small)
-
-    table.cell(tbl, 0, 17, "Mo VAL", text_color=color.new(#26A69A, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 17, not na(moVAL) ? str.tostring(moVAL, format.mintick) : "—", text_color=dFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 17, str.tostring(distMoVAL, "#.#") + " ATR", text_color=nearMoVAL ? color.new(#FF9800, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 17, nearMoVAL ? "BUY ZONE" : "", text_color=color.new(#00E676, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 17, "", text_size=size.small)
-
-    // Row 18 — spacer
-    for c = 0 to 4
-        table.cell(tbl, c, 18, "", text_size=size.tiny)
-
-    // Row 19 — Position Section Header
-    color lifecycleCol = setupStatus == "FILLED" ? color.new(#00E676, 0) : setupStatus == "CANDIDATE" ? color.new(#FFC107, 0) : setupStatus == "PENDING" ? color.new(#2979FF, 0) : setupStatus == "MISSED" ? color.new(#FF1744, 0) : setupStatus == "EXPIRED" ? color.new(#FF5722, 0) : mFg
-    table.cell(tbl, 0, 19, "POSITION", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 19, dispType, text_color=dispTypeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    string dirLabel = tradeDir != "" ? tradeDir : "---"
-    color dirCol = tradeDir == "BUY" ? color.new(#00E676, 0) : tradeDir == "SELL" ? color.new(#FF1744, 0) : mFg
-    string curStrength = tradeDir == "SELL" ? sellStrength : strength
-    table.cell(tbl, 2, 19, dirLabel, text_color=dirCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 19, setupStatus, text_color=lifecycleCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    bool anyTp1 = tp1Hit or sellTp1Hit
-    table.cell(tbl, 4, 19, anyTp1 ? "TP1 HIT" : "", text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-
-    // Row 20 — Entry + P/L
-    float activePL = not na(activeEntryPrice) ? close - activeEntryPrice : not na(activeSellEntryPrice) ? activeSellEntryPrice - close : na
-    table.cell(tbl, 0, 20, "Entry", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 20, not na(dispEntry) ? str.tostring(dispEntry, format.mintick) : "—", text_color=not na(dispEntry) ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 20, not na(activePL) ? (activePL >= 0 ? "+" : "") + str.tostring(activePL / syminfo.mintick, "#") + " pips" : "—", text_color=not na(activePL) ? (activePL >= 0 ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
-    int activeBars = not na(activeEntry) ? bar_index - activeEntry : not na(activeSellEntry) ? bar_index - activeSellEntry : 0
-    table.cell(tbl, 3, 20, activeBars > 0 ? str.tostring(activeBars) + " bars" : "", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 20, "", text_size=size.small)
-
-    // Row 21 — Stop Loss
-    float slATRdist = not na(dispSL) and atrV > 0 ? math.abs(close - dispSL) / atrV : na
-    table.cell(tbl, 0, 21, "Stop Loss", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 21, not na(dispSL) ? str.tostring(dispSL, format.mintick) : "—", text_color=not na(dispSL) ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 21, not na(slATRdist) ? str.tostring(slATRdist, "#.#") + " ATR" : "", text_color=mFg, text_size=size.small, text_halign=text.align_center)
-    string trailLbl = exitMode == "Adaptive_Trail" and hasActiveTrade ? "TRAILING" : ""
-    table.cell(tbl, 3, 21, trailLbl, text_color=color.new(#00BCD4, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 4, 21, "", text_size=size.small)
-
-    // Row 22 — TP1
-    table.cell(tbl, 0, 22, "TP1 (1R)", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 22, not na(dispTP1d) ? str.tostring(dispTP1d, format.mintick) : "—", text_color=not na(dispTP1d) ? color.new(#00E676, 70) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 22, tp1Hit or sellTp1Hit ? "HIT" : "", text_color=color.new(#00E676, 0), text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 22, "", text_size=size.small)
-    table.cell(tbl, 4, 22, "", text_size=size.small)
-
-    // Row 23 — TP2
-    table.cell(tbl, 0, 23, "TP2 (2R)", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 23, not na(dispTP2d) ? str.tostring(dispTP2d, format.mintick) : "—", text_color=not na(dispTP2d) ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 23, "", text_size=size.small)
-    table.cell(tbl, 3, 23, "", text_size=size.small)
-    table.cell(tbl, 4, 23, "", text_size=size.small)
-
-    // Row 24 — TP3
-    table.cell(tbl, 0, 24, "TP3 (VP)", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 24, not na(dispTP3d) ? str.tostring(dispTP3d, format.mintick) : "—", text_color=not na(dispTP3d) ? color.new(#00BCD4, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 24, "", text_size=size.small)
-    table.cell(tbl, 3, 24, "", text_size=size.small)
-    table.cell(tbl, 4, 24, "", text_size=size.small)
-
-    // Row 25 — R:R + Position Size
-    color dispRRCol = not na(dispRR) and dispRR >= 2.5 ? color.new(#00E676, 0) : not na(dispRR) and dispRR >= 2.0 ? color.new(#26A69A, 0) : not na(dispRR) and dispRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
-    table.cell(tbl, 0, 25, "Exp. R:R", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 25, not na(dispRR) ? str.tostring(dispRR, "#.#") + "R" : "—", text_color=not na(dispRR) ? dispRRCol : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 25, not na(dispRR) ? (dispRR >= rrMin ? "PASS" : "FAIL") : "", text_color=not na(dispRR) ? (dispRR >= rrMin ? color.new(#00E676, 0) : color.new(#FF1744, 0)) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 25, "", text_size=size.small)
-    table.cell(tbl, 4, 25, "", text_size=size.small)
-
-    // Row 26 — Position Sizing
-    table.cell(tbl, 0, 26, "Size", text_color=color.new(#FFC107, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 26, stdLots > 0 ? str.tostring(stdLots, "#.##") + " lots" : "—", text_color=stdLots > 0 ? color.new(#00BCD4, 0) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 26, stopPips > 0 ? str.tostring(stopPips, "#") + " pip SL" : "", text_color=mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 26, "$" + str.tostring(riskAmt, "#.##") + " risk", text_color=mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 4, 26, "", text_size=size.small, bgcolor=hBg)
-
-    // Row 27 — Untested Support + Resistance
-    table.cell(tbl, 0, 27, "Untested", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    string untSupStr = not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "—"
-    string untResStr = not na(nearUntResPrice) ? str.tostring(nearUntResPrice, format.mintick) : "—"
-    table.cell(tbl, 1, 27, "S:" + untSupStr, text_color=nearUntSup ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 27, "R:" + untResStr, text_color=nearUntRes ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 27, str.tostring(array.size(untVAL)) + "s/" + str.tostring(array.size(untVAH)) + "r", text_color=mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 27, "", text_size=size.small)
-
-    // Row 28 — spacer
-    for c = 0 to 4
-        table.cell(tbl, c, 28, "", text_size=size.tiny)
-
-    // Row 29 — Pending Orders Header
-    bool anyPend = hasPending or hasPendingSell
-    color pendHdrCol = anyPend ? color.new(#2979FF, 0) : color.new(#30363d, 0)
-    table.cell(tbl, 0, 29, "LIMITS", text_color=anyPend ? hFg : color.new(#30363d, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    int totalPendDash = pendCount + pendSellCount
-    table.cell(tbl, 1, 29, anyPend ? str.tostring(totalPendDash) + " pending" : "", text_color=pendHdrCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 29, "Entry", text_color=hasPending ? mFg : color.new(#30363d, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 29, "SL / Lots", text_color=hasPending ? mFg : color.new(#30363d, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 4, 29, "Away", text_color=hasPending ? mFg : color.new(#30363d, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-
-    // Row 30 — Wk VAL Pending
-    table.cell(tbl, 0, 30, "Wk VAL", text_color=pendBuyWk ? color.new(#26A69A, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 30, pendBuyWk ? "BUY LIMIT" : "", text_color=pendBuyWk ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 30, pendBuyWk and not na(wkVAL) ? str.tostring(wkVAL, format.mintick) : "", text_color=pendBuyWk ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 30, pendBuyWk and not na(pendWkSL) ? str.tostring(pendWkSL, format.mintick) + " / " + str.tostring(nz(pendWkLots, 0), "#.##") + "L" : "", text_color=pendBuyWk ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 30, pendBuyWk and not na(pendWkPipsAway) ? str.tostring(pendWkPipsAway, "#") + "p" : "", text_color=pendBuyWk ? dFg : mFg, text_size=size.small, text_halign=text.align_center)
-
-    // Row 31 — Mo VAL Pending
-    table.cell(tbl, 0, 31, "Mo VAL", text_color=pendBuyMo ? color.new(#26A69A, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 31, pendBuyMo ? "BUY LIMIT" : "", text_color=pendBuyMo ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 31, pendBuyMo and not na(moVAL) ? str.tostring(moVAL, format.mintick) : "", text_color=pendBuyMo ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 31, pendBuyMo and not na(pendMoSL) ? str.tostring(pendMoSL, format.mintick) + " / " + str.tostring(nz(pendMoLots, 0), "#.##") + "L" : "", text_color=pendBuyMo ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 31, pendBuyMo and not na(pendMoPipsAway) ? str.tostring(pendMoPipsAway, "#") + "p" : "", text_color=pendBuyMo ? dFg : mFg, text_size=size.small, text_halign=text.align_center)
-
-    // Row 32 — Untested Pending
-    table.cell(tbl, 0, 32, "Unt Sup", text_color=pendBuyUnt ? color.new(#26A69A, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 32, pendBuyUnt ? "BUY LIMIT" : "", text_color=pendBuyUnt ? color.new(#2979FF, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 32, pendBuyUnt and not na(nearUntSupPrice) ? str.tostring(nearUntSupPrice, format.mintick) : "", text_color=pendBuyUnt ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 32, pendBuyUnt and not na(pendUntSL) ? str.tostring(pendUntSL, format.mintick) + " / " + str.tostring(nz(pendUntLots, 0), "#.##") + "L" : "", text_color=pendBuyUnt ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 32, pendBuyUnt and not na(pendUntPipsAway) ? str.tostring(pendUntPipsAway, "#") + "p" : "", text_color=pendBuyUnt ? dFg : mFg, text_size=size.small, text_halign=text.align_center)
-
-    // Row 33 — Wk VAH Sell Pending
-    table.cell(tbl, 0, 33, "Wk VAH", text_color=pendSellWk ? color.new(#EF5350, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 33, pendSellWk ? "SELL LIMIT" : "", text_color=pendSellWk ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 33, pendSellWk and not na(wkVAH) ? str.tostring(wkVAH, format.mintick) : "", text_color=pendSellWk ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 33, pendSellWk and not na(pendSellWkSL) ? str.tostring(pendSellWkSL, format.mintick) + " / " + str.tostring(nz(pendSellWkLots, 0), "#.##") + "L" : "", text_color=pendSellWk ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 33, pendSellWk and not na(pendSellWkPipsAway) ? str.tostring(pendSellWkPipsAway, "#") + "p" : "", text_color=pendSellWk ? dFg : mFg, text_size=size.small, text_halign=text.align_center)
-
-    // Row 34 — Mo VAH Sell Pending
-    table.cell(tbl, 0, 34, "Mo VAH", text_color=pendSellMo ? color.new(#EF5350, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 34, pendSellMo ? "SELL LIMIT" : "", text_color=pendSellMo ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 34, pendSellMo and not na(moVAH) ? str.tostring(moVAH, format.mintick) : "", text_color=pendSellMo ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 34, pendSellMo and not na(pendSellMoSL) ? str.tostring(pendSellMoSL, format.mintick) + " / " + str.tostring(nz(pendSellMoLots, 0), "#.##") + "L" : "", text_color=pendSellMo ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 34, pendSellMo and not na(pendSellMoPipsAway) ? str.tostring(pendSellMoPipsAway, "#") + "p" : "", text_color=pendSellMo ? dFg : mFg, text_size=size.small, text_halign=text.align_center)
-
-    // Row 35 — Unt Res Sell Pending
-    table.cell(tbl, 0, 35, "Unt Res", text_color=pendSellUnt ? color.new(#EF5350, 0) : color.new(#30363d, 0), text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 35, pendSellUnt ? "SELL LIMIT" : "", text_color=pendSellUnt ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 35, pendSellUnt and not na(nearUntResPrice) ? str.tostring(nearUntResPrice, format.mintick) : "", text_color=pendSellUnt ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 3, 35, pendSellUnt and not na(pendSellUntSL) ? str.tostring(pendSellUntSL, format.mintick) + " / " + str.tostring(nz(pendSellUntLots, 0), "#.##") + "L" : "", text_color=pendSellUnt ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 35, pendSellUnt and not na(pendSellUntPipsAway) ? str.tostring(pendSellUntPipsAway, "#") + "p" : "", text_color=pendSellUnt ? dFg : mFg, text_size=size.small, text_halign=text.align_center)
-
-    // Row 36 — spacer
-    for c = 0 to 4
-        table.cell(tbl, c, 36, "", text_size=size.tiny)
-
-    // Row 37 — V4.1 Market State Header
-    table.cell(tbl, 0, 37, "MARKET STATE", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 37, "", text_size=size.small, bgcolor=hBg)
-    table.cell(tbl, 2, 37, "", text_size=size.small, bgcolor=hBg)
-    table.cell(tbl, 3, 37, "V4.1", text_color=color.new(#FFC107, 0), text_size=size.tiny, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 4, 37, "OBSERVE", text_color=color.new(#8b949e, 0), text_size=size.tiny, bgcolor=hBg, text_halign=text.align_center)
-
-    // Row 38 — Bull/Bear Trend Scores
-    color rcBullCol = rcBullTrend >= 60 ? color.new(#00E676, 0) : rcBullTrend >= 40 ? color.new(#FFC107, 0) : mFg
-    color rcBearCol = rcBearTrend >= 60 ? color.new(#FF1744, 0) : rcBearTrend >= 40 ? color.new(#FFC107, 0) : mFg
-    table.cell(tbl, 0, 38, "Bull Trend", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 38, str.tostring(rcBullTrend, "#"), text_color=rcBullCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 38, "Bear Trend", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 3, 38, str.tostring(rcBearTrend, "#"), text_color=rcBearCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 38, "", text_size=size.small)
-
-    // Row 39 — Range/Transition Scores
-    color rcRngCol = rcRange >= 55 ? color.new(#2979FF, 0) : rcRange >= 35 ? color.new(#FFC107, 0) : mFg
-    color rcTrnCol = rcTransition >= 45 ? color.new(#FFC107, 0) : mFg
-    table.cell(tbl, 0, 39, "Range", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 39, str.tostring(rcRange, "#"), text_color=rcRngCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 39, "Transition", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 3, 39, str.tostring(rcTransition, "#"), text_color=rcTrnCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 39, "", text_size=size.small)
-
-    // Row 40 — Final State + Confidence
-    color rcConfCol = rcConfidence >= 70 ? color.new(#00E676, 0) : rcConfidence >= 55 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
-    table.cell(tbl, 0, 40, "Final State", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 40, rcState, text_color=rcStateCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 40, str.tostring(rcConfidence, "#") + "/100", text_color=rcConfCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 40, "vs " + regime, text_color=regimeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 4, 40, "", text_size=size.small, bgcolor=hBg)
-
-    // Row 41 — V4.1B Macro Bias + Trade Permission
-    table.cell(tbl, 0, 41, "Macro Bias", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 41, macroBias, text_color=macroBiasCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 41, "Permission", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 3, 41, tradePermission, text_color=permCol, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 41, "V4.1B", text_color=color.new(#FFC107, 0), text_size=size.tiny, text_halign=text.align_center)
-
-    // Row 42 — spacer
-    for c = 0 to 4
-        table.cell(tbl, c, 42, "", text_size=size.tiny)
-
-    // Row 43 — NEXT OPPORTUNITY Header
-    bool nxIsActive = nxAction == "ACTIVE_LONG" or nxAction == "ACTIVE_SHORT"
-    string nxHeader = nxIsActive ? "CURRENT TRADE" : "NEXT OPPORTUNITY"
-    table.cell(tbl, 0, 43, nxHeader, text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
-    table.cell(tbl, 1, 43, nxAction, text_color=nxActCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 2, 43, "", text_size=size.small, bgcolor=hBg)
-    table.cell(tbl, 3, 43, "V4.1D", text_color=color.new(#FFC107, 0), text_size=size.tiny, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 4, 43, "", text_size=size.small, bgcolor=hBg)
-
-    // Row 44 — Entry + SL
-    table.cell(tbl, 0, 44, "NX Entry", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 44, not na(nxEntry) ? str.tostring(nxEntry, format.mintick) : "—", text_color=not na(nxEntry) ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 44, "NX Stop", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 3, 44, not na(nxSL) ? str.tostring(nxSL, format.mintick) : "—", text_color=not na(nxSL) ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 4, 44, "", text_size=size.small)
-
-    // Row 45 — TP1 + TP2 + R:R
-    table.cell(tbl, 0, 45, "NX TP1", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 45, not na(nxTP1) ? str.tostring(nxTP1, format.mintick) : "—", text_color=not na(nxTP1) ? color.new(#00E676, 70) : mFg, text_size=size.small, text_halign=text.align_center)
-    table.cell(tbl, 2, 45, "NX TP2", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 3, 45, not na(nxTP2) ? str.tostring(nxTP2, format.mintick) : "—", text_color=not na(nxTP2) ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
-    color nxRRCol = not na(nxRR) and nxRR >= 2.5 ? color.new(#00E676, 0) : not na(nxRR) and nxRR >= 2.0 ? color.new(#26A69A, 0) : not na(nxRR) and nxRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
-    table.cell(tbl, 4, 45, not na(nxRR) ? str.tostring(nxRR, "#.#") + "R" : "", text_color=not na(nxRR) ? nxRRCol : mFg, text_size=size.small, text_halign=text.align_center)
-
-    // Row 46 — Reason + Expiry
-    table.cell(tbl, 0, 46, "Reason", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 46, nxReason, text_color=nxActCol, text_size=size.tiny, text_halign=text.align_center)
-    table.cell(tbl, 2, 46, "", text_size=size.small)
-    table.cell(tbl, 3, 46, nxExpiry != "" ? nxExpiry : "", text_color=color.new(#8b949e, 0), text_size=size.tiny, text_halign=text.align_center)
-    table.cell(tbl, 4, 46, "", text_size=size.small)
-
-    // Row 47 — Blocked / Previous Setup Info
-    string nxPrevLabel = nxBlocked != "" ? nxBlocked : prevSetupInfo != "" ? prevSetupInfo : ""
-    color nxPrevCol = nxBlocked != "" ? color.new(#FF1744, 0) : prevSetupInfo != "" ? color.new(#8b949e, 0) : mFg
-    table.cell(tbl, 0, 47, nxBlocked != "" ? "Blocked" : prevSetupInfo != "" ? "Previous" : "", text_color=mFg, text_size=size.small, text_halign=text.align_left)
-    table.cell(tbl, 1, 47, nxPrevLabel, text_color=nxPrevCol, text_size=size.tiny, text_halign=text.align_center)
-    table.cell(tbl, 2, 47, "", text_size=size.small)
-    table.cell(tbl, 3, 47, "", text_size=size.small)
-    table.cell(tbl, 4, 47, "", text_size=size.small)
+    drawDashAnalysis(tbl, hBg, hFg, dFg, mFg)
+    drawDashVP(tbl, hBg, hFg, dFg, mFg)
+    drawDashPosition(tbl, hBg, hFg, dFg, mFg)
+    drawDashState(tbl, hBg, hFg, dFg, mFg)
 
 // ══════════════════════════════════════════════════════════
 //  ALERTS (BUY & SELL — rich dynamic messages)
