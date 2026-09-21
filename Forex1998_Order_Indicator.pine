@@ -409,6 +409,28 @@ bool htfBear = useHTF and mtfBearCount >= v4MtfReq and mtfBullCount <= 1
 bool htfNeutral = useHTF and not htfBull and not htfBear
 string htfBias = htfBull ? "BULL " + str.tostring(mtfBullCount) + "/4" : htfBear ? "BEAR " + str.tostring(mtfBearCount) + "/4" : "MIXED " + str.tostring(mtfBullCount) + "B/" + str.tostring(mtfBearCount) + "S"
 
+// V4.1b: Directional Permission Layer — separates regime from trade direction
+string macroBias = "NEUTRAL"
+if useHTF
+    if htfBull
+        macroBias := "BULLISH"
+    else if htfBear
+        macroBias := "BEARISH"
+    else if mtfBearCount > mtfBullCount
+        macroBias := "BEARISH"
+    else if mtfBullCount > mtfBearCount
+        macroBias := "BULLISH"
+color macroBiasCol = macroBias == "BULLISH" ? color.new(#00E676, 0) : macroBias == "BEARISH" ? color.new(#FF1744, 0) : color.new(#8b949e, 0)
+
+string tradePermission = "BOTH"
+if not useHTF
+    tradePermission := "BOTH"
+else if macroBias == "BULLISH"
+    tradePermission := "LONG_ONLY"
+else if macroBias == "BEARISH"
+    tradePermission := "SHORT_ONLY"
+color permCol = tradePermission == "LONG_ONLY" ? color.new(#00E676, 0) : tradePermission == "SHORT_ONLY" ? color.new(#FF1744, 0) : color.new(#2979FF, 0)
+
 // ── RSI Divergence Detection ──
 float priceLow10 = ta.lowest(low, 10)
 float priceLowPrev = ta.lowest(low[12], 10)
@@ -831,7 +853,7 @@ bool v11_buy_divergence = bullDiv and (nearSup or nearPOC) and close > open and 
 
 // Apply V3 filters: session + volatility + HTF bias
 bool sessPass = sessionOK or not useSess
-bool htfBuyPass = not useHTF or htfBull or (regime == "RANGE" and not htfBear)
+bool htfBuyPass = tradePermission == "LONG_ONLY" or tradePermission == "BOTH"
 
 bool v11_buy = (v11_buy_classic or v11_buy_poc or v11_buy_pattern or v11_buy_confluence or v11_buy_divergence) and sessPass and volOK and htfBuyPass
 
@@ -840,7 +862,7 @@ int oscExtSell = (rsiV > rsiOB ? 1 : 0) + (rawK > 75 ? 1 : 0) + (wrV > -25 ? 1 :
 string sellStrength = oscExtSell >= 2 ? "STRONG" : "NORMAL"
 bool oscOverbought = rsiV > rsiOB or rawK > 75 or wrV > -25
 bool momBearish = (scoreMA3 < scoreMA6 and scoreMA3 < 0.0) or score < -0.15
-bool htfSellPass = not useHTF or htfBear or (regime == "RANGE" and not htfBull)
+bool htfSellPass = tradePermission == "SHORT_ONLY" or tradePermission == "BOTH"
 
 bool v11_sell_classic = oscExtSell >= 2 and (nearRes or nearPOC_sell) and momBearish and close < open and bodyConviction and regime != "BULL"
 bool v11_sell_poc = nearPOC_sell and score < -0.1 and close < open and momBearish and bodyConviction and regime != "BULL"
@@ -961,6 +983,14 @@ else
 float rrSell = sellStopDist > 0 ? (close - sellTarget) / sellStopDist : 0.0
 bool rrPassSell = rrSell >= rrMin
 
+// V4.1c: Signal Lifecycle / Freshness
+var string setupStatus = "SCANNING"
+var float  setupPrice = na
+var int    setupBarIdx = na
+var string setupDir = ""
+var string prevSetupInfo = ""
+bool newTradingDay = bar_index > 0 and dayofweek != dayofweek[1]
+
 // ── Active trade tracking with Adaptive Trail (BUY & SELL) ──
 var float activeSL     = na
 var float activeTP     = na
@@ -1020,6 +1050,11 @@ if buyTrig
     origStopDist := buyStopDist
     trailHighest := high
     tp1Hit       := false
+    setupStatus  := "CANDIDATE"
+    setupPrice   := close
+    setupBarIdx  := bar_index
+    setupDir     := "BUY"
+    prevSetupInfo := ""
 
 if sellTrig
     activeSellSL    := sellSL
@@ -1032,6 +1067,11 @@ if sellTrig
     origSellStopDist := sellStopDist
     trailLowest     := low
     sellTp1Hit      := false
+    setupStatus     := "CANDIDATE"
+    setupPrice      := close
+    setupBarIdx     := bar_index
+    setupDir        := "SELL"
+    prevSetupInfo   := ""
 
 // Exit tracking
 bool timeExit = false
@@ -1039,9 +1079,19 @@ bool timeExitSell = false
 if not na(activeEntry)
     int barsHeld = bar_index - activeEntry
 
-    // Signal expiry: auto-clear stale trades the user likely never entered
-    bool sigExpired = barsHeld >= sigExpiry and not na(origStopDist) and nz(trailHighest, high) <= activeEntryPrice + nz(origStopDist, 1) * 0.25
-    if sigExpired
+    // V4.1c: Enhanced expiry — MISSED (price moved away), daily reset, or time-based
+    bool buyNoProgress = not na(origStopDist) and origStopDist > 0 and (nz(trailHighest, high) - activeEntryPrice) / origStopDist < 0.25
+    bool entryMissedBuy = buyNoProgress and barsHeld >= 2 and close < activeEntryPrice - atrV * 1.5
+    bool dailyResetBuy = newTradingDay and buyNoProgress and barsHeld >= 1
+    bool sigExpired = barsHeld >= sigExpiry and buyNoProgress
+    bool clearBuy = entryMissedBuy or dailyResetBuy or sigExpired
+    if clearBuy
+        if entryMissedBuy
+            prevSetupInfo := "BUY MISSED @" + str.tostring(activeEntryPrice, format.mintick)
+            setupStatus := "MISSED"
+        else
+            prevSetupInfo := "BUY EXPIRED @" + str.tostring(activeEntryPrice, format.mintick)
+            setupStatus := "EXPIRED"
         activeSL         := na
         activeTP         := na
         activeTP1        := na
@@ -1052,8 +1102,13 @@ if not na(activeEntry)
         origStopDist     := na
         trailHighest     := na
         tp1Hit           := false
+        setupPrice       := na
+        setupBarIdx      := na
+        setupDir         := ""
 
-    if not sigExpired
+    if not clearBuy
+        if setupStatus == "CANDIDATE" and not buyNoProgress
+            setupStatus := "ACTIVE"
         // Stale exit: close if MFE hasn't reached threshold after N bars
         if useStaleExit and barsHeld >= staleExitBars and not na(origStopDist) and origStopDist > 0
             float maxMFE_R = (nz(trailHighest, high) - activeEntryPrice) / origStopDist
@@ -1121,12 +1176,27 @@ if not na(activeEntry)
             origStopDist     := na
             trailHighest     := na
             tp1Hit           := false
+            setupStatus      := "SCANNING"
+            setupPrice       := na
+            setupBarIdx      := na
+            setupDir         := ""
 
 // Sell exit tracking
 if not na(activeSellEntry)
     int sellBarsHeld = bar_index - activeSellEntry
-    bool sellSigExpired = sellBarsHeld >= sigExpiry and not na(origSellStopDist) and nz(trailLowest, low) >= activeSellEntryPrice - nz(origSellStopDist, 1) * 0.15
-    if sellSigExpired
+    // V4.1c: Enhanced sell expiry
+    bool sellNoProgress = not na(origSellStopDist) and origSellStopDist > 0 and (activeSellEntryPrice - nz(trailLowest, low)) / origSellStopDist < 0.15
+    bool entryMissedSell = sellNoProgress and sellBarsHeld >= 2 and close > activeSellEntryPrice + atrV * 1.5
+    bool dailyResetSell = newTradingDay and sellNoProgress and sellBarsHeld >= 1
+    bool sellSigExpired = sellBarsHeld >= sigExpiry and sellNoProgress
+    bool clearSell = entryMissedSell or dailyResetSell or sellSigExpired
+    if clearSell
+        if entryMissedSell
+            prevSetupInfo := "SELL MISSED @" + str.tostring(activeSellEntryPrice, format.mintick)
+            setupStatus := "MISSED"
+        else
+            prevSetupInfo := "SELL EXPIRED @" + str.tostring(activeSellEntryPrice, format.mintick)
+            setupStatus := "EXPIRED"
         activeSellSL         := na
         activeSellTP         := na
         activeSellTP1        := na
@@ -1137,8 +1207,13 @@ if not na(activeSellEntry)
         origSellStopDist     := na
         trailLowest          := na
         sellTp1Hit           := false
+        setupPrice           := na
+        setupBarIdx          := na
+        setupDir             := ""
 
-    if not sellSigExpired
+    if not clearSell
+        if setupStatus == "CANDIDATE" and not sellNoProgress
+            setupStatus := "ACTIVE"
         // Stale exit for sells
         if useStaleExit and sellBarsHeld >= staleExitBars and not na(origSellStopDist) and origSellStopDist > 0
             float sellMaxMFE_R = (activeSellEntryPrice - nz(trailLowest, low)) / origSellStopDist
@@ -1202,6 +1277,10 @@ if not na(activeSellEntry)
             origSellStopDist     := na
             trailLowest          := na
             sellTp1Hit           := false
+            setupStatus          := "SCANNING"
+            setupPrice           := na
+            setupBarIdx          := na
+            setupDir             := ""
 
 // ── V2: Fresh Signal Reset Tracking ──
 if useV2
@@ -1401,6 +1480,128 @@ if pendSellUnt and not na(nearUntResPrice) and atrV > 0
 
 int pendSellCount = (pendSellWk ? 1 : 0) + (pendSellMo ? 1 : 0) + (pendSellUnt ? 1 : 0)
 bool hasPendingSell = pendSellCount > 0
+
+// ══════════════════════════════════════════════════════════
+//  V4.1D: NEXT OPPORTUNITY PLANNER
+//  Runs every bar — determines actionable next step
+// ══════════════════════════════════════════════════════════
+
+string nxAction  = "NO_TRADE"
+float  nxEntry   = na
+float  nxSL      = na
+float  nxTP1     = na
+float  nxTP2     = na
+float  nxRR      = na
+string nxReason  = ""
+string nxExpiry  = ""
+string nxBlocked = ""
+
+bool hasActivePos = not na(activeSL) or not na(activeSellSL)
+
+if hasActivePos
+    if not na(activeSL)
+        nxAction := "ACTIVE_LONG"
+        nxEntry  := activeEntryPrice
+        nxSL     := activeSL
+        nxTP1    := activeTP1
+        nxTP2    := activeTP
+        nxReason := "Position open — managing trade"
+    else
+        nxAction := "ACTIVE_SHORT"
+        nxEntry  := activeSellEntryPrice
+        nxSL     := activeSellSL
+        nxTP1    := activeSellTP1
+        nxTP2    := activeSellTP
+        nxReason := "Position open — managing trade"
+else if buyTrig
+    nxAction := "MARKET_BUY"
+    nxEntry  := close
+    nxSL     := buySL
+    nxTP1    := buyTP1
+    nxTP2    := buyTP2
+    nxRR     := rrBuy
+    nxReason := "Signal fired — immediate entry"
+    nxExpiry := "This bar"
+else if sellTrig
+    nxAction := "MARKET_SELL"
+    nxEntry  := close
+    nxSL     := sellSL
+    nxTP1    := sellTP1
+    nxTP2    := sellTP2
+    nxRR     := rrSell
+    nxReason := "Signal fired — immediate entry"
+    nxExpiry := "This bar"
+else if rcState == "TRANSITION" and tradePermission == "LONG_ONLY"
+    nxAction  := "BUY_STOP"
+    nxEntry   := rc20Hi
+    nxSL      := rc20Hi - atrV * atrBuf
+    float _bsDist = rc20Hi - nxSL
+    nxTP1     := rc20Hi + _bsDist
+    nxTP2     := rc20Hi + _bsDist * 2.0
+    nxRR      := _bsDist > 0 ? (nxTP2 - rc20Hi) / _bsDist : 0.0
+    nxReason  := "Transition — breakout above range"
+    nxExpiry  := "Until regime change"
+else if rcState == "TRANSITION" and tradePermission == "SHORT_ONLY"
+    nxAction  := "SELL_STOP"
+    nxEntry   := rc20Lo
+    nxSL      := rc20Lo + atrV * atrBuf
+    float _ssDist = nxSL - rc20Lo
+    nxTP1     := rc20Lo - _ssDist
+    nxTP2     := rc20Lo - _ssDist * 2.0
+    nxRR      := _ssDist > 0 ? (rc20Lo - nxTP2) / _ssDist : 0.0
+    nxReason  := "Transition — breakdown below range"
+    nxExpiry  := "Until regime change"
+else if hasPending and tradePermission != "SHORT_ONLY"
+    nxAction := "BUY_LIMIT"
+    nxEntry  := pendBuyMo ? moVAL : pendBuyWk ? wkVAL : nearUntSupPrice
+    nxSL     := pendBuyMo ? pendMoSL : pendBuyWk ? pendWkSL : pendUntSL
+    nxTP1    := pendBuyMo ? pendMoTP : pendBuyWk ? pendWkTP : pendUntTP
+    nxRR     := pendBuyMo ? nz(pendMoRR, 0) : pendBuyWk ? nz(pendWkRR, 0) : nz(pendUntRR, 0)
+    nxTP2    := not na(nxEntry) and not na(nxSL) ? nxEntry + math.abs(nxEntry - nxSL) * 2.0 : na
+    string _limSrc = pendBuyMo ? "Mo VAL" : pendBuyWk ? "Wk VAL" : "Unt Support"
+    nxReason := "Limit buy at " + _limSrc
+    nxExpiry := "Until level invalidated"
+else if hasPendingSell and tradePermission != "LONG_ONLY"
+    nxAction := "SELL_LIMIT"
+    nxEntry  := pendSellMo ? moVAH : pendSellWk ? wkVAH : nearUntResPrice
+    nxSL     := pendSellMo ? pendSellMoSL : pendSellWk ? pendSellWkSL : pendSellUntSL
+    nxTP1    := pendSellMo ? pendSellMoTP : pendSellWk ? pendSellWkTP : pendSellUntTP
+    nxRR     := pendSellMo ? nz(pendSellMoRR, 0) : pendSellWk ? nz(pendSellWkRR, 0) : nz(pendSellUntRR, 0)
+    nxTP2    := not na(nxEntry) and not na(nxSL) ? nxEntry - math.abs(nxSL - nxEntry) * 2.0 : na
+    string _limSSrc = pendSellMo ? "Mo VAH" : pendSellWk ? "Wk VAH" : "Unt Resistance"
+    nxReason := "Limit sell at " + _limSSrc
+    nxExpiry := "Until level invalidated"
+else if tradePermission != "SHORT_ONLY" and (nearSup or nearPOC) and momBullish
+    nxAction  := "WAIT_FOR_LEVEL"
+    nxEntry   := nearSup ? (not na(wkVAL) ? wkVAL : na) : na
+    nxReason  := "Approaching buy zone — wait for confirmation"
+    nxBlocked := not sessPass ? "Session filter" : not volOK ? "Low volume" : regime == "BEAR" ? "Bear regime" : ""
+else if tradePermission != "LONG_ONLY" and (nearRes or nearPOC_sell) and momBearish
+    nxAction  := "WAIT_FOR_LEVEL"
+    nxEntry   := nearRes ? (not na(wkVAH) ? wkVAH : na) : na
+    nxReason  := "Approaching sell zone — wait for confirmation"
+    nxBlocked := not sessPass ? "Session filter" : not volOK ? "Low volume" : regime == "BULL" ? "Bull regime" : ""
+else
+    nxAction := "NO_TRADE"
+    if tradePermission == "LONG_ONLY"
+        nxReason := "Waiting for buy setup in " + rcState
+    else if tradePermission == "SHORT_ONLY"
+        nxReason := "Waiting for sell setup in " + rcState
+    else
+        nxReason := "No setup — " + rcState + " regime"
+    nxBlocked := setupStatus == "EXPIRED" or setupStatus == "MISSED" ? prevSetupInfo : ""
+
+color nxActCol = switch nxAction
+    "MARKET_BUY"   => color.new(#00E676, 0)
+    "MARKET_SELL"  => color.new(#FF1744, 0)
+    "BUY_LIMIT"    => color.new(#2979FF, 0)
+    "SELL_LIMIT"   => color.new(#FF5722, 0)
+    "BUY_STOP"     => color.new(#00BCD4, 0)
+    "SELL_STOP"    => color.new(#E040FB, 0)
+    "WAIT_FOR_LEVEL" => color.new(#FFC107, 0)
+    "ACTIVE_LONG"  => color.new(#00E676, 0)
+    "ACTIVE_SHORT" => color.new(#FF1744, 0)
+    => color.new(#8b949e, 0)
 
 // ── Signal Text ──
 string sigText = "WAIT"
@@ -1708,7 +1909,7 @@ if barstate.islast and showVP
 
 tablePosition = tblPos == "Top Left" ? position.top_left : tblPos == "Bottom Right" ? position.bottom_right : tblPos == "Bottom Left" ? position.bottom_left : position.top_right
 
-var table tbl = showTbl ? table.new(tablePosition, 5, 45, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
+var table tbl = showTbl ? table.new(tablePosition, 5, 50, color.new(#0d1117, 5), color.new(#30363d, 0), 1, color.new(#30363d, 0), 1) : na
 
 if showTbl and barstate.islast and not na(tbl)
     hBg = color.new(#161b22, 0)
@@ -1886,14 +2087,15 @@ if showTbl and barstate.islast and not na(tbl)
     for c = 0 to 4
         table.cell(tbl, c, 18, "", text_size=size.tiny)
 
-    // Row 19 — Order Section Header
-    table.cell(tbl, 0, 19, "ORDER", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    // Row 19 — Position Section Header
+    color lifecycleCol = setupStatus == "ACTIVE" ? color.new(#00E676, 0) : setupStatus == "CANDIDATE" ? color.new(#FFC107, 0) : setupStatus == "MISSED" ? color.new(#FF1744, 0) : setupStatus == "EXPIRED" ? color.new(#FF5722, 0) : mFg
+    table.cell(tbl, 0, 19, "POSITION", text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
     table.cell(tbl, 1, 19, dispType, text_color=dispTypeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     string dirLabel = tradeDir != "" ? tradeDir : "---"
     color dirCol = tradeDir == "BUY" ? color.new(#00E676, 0) : tradeDir == "SELL" ? color.new(#FF1744, 0) : mFg
     string curStrength = tradeDir == "SELL" ? sellStrength : strength
     table.cell(tbl, 2, 19, dirLabel, text_color=dirCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
-    table.cell(tbl, 3, 19, curStrength, text_color=curStrength == "STRONG" ? color.new(#FFC107, 0) : mFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 3, 19, setupStatus, text_color=lifecycleCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     bool anyTp1 = tp1Hit or sellTp1Hit
     table.cell(tbl, 4, 19, anyTp1 ? "TP1 HIT" : "", text_color=color.new(#00E676, 0), text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
 
@@ -2052,6 +2254,57 @@ if showTbl and barstate.islast and not na(tbl)
     table.cell(tbl, 2, 40, str.tostring(rcConfidence, "#") + "/100", text_color=rcConfCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 3, 40, "vs " + regime, text_color=regimeCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
     table.cell(tbl, 4, 40, "", text_size=size.small, bgcolor=hBg)
+
+    // Row 41 — V4.1B Macro Bias + Trade Permission
+    table.cell(tbl, 0, 41, "Macro Bias", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 41, macroBias, text_color=macroBiasCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 41, "Permission", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 3, 41, tradePermission, text_color=permCol, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 4, 41, "V4.1B", text_color=color.new(#FFC107, 0), text_size=size.tiny, text_halign=text.align_center)
+
+    // Row 42 — spacer
+    for c = 0 to 4
+        table.cell(tbl, c, 42, "", text_size=size.tiny)
+
+    // Row 43 — NEXT OPPORTUNITY Header
+    bool nxIsActive = nxAction == "ACTIVE_LONG" or nxAction == "ACTIVE_SHORT"
+    string nxHeader = nxIsActive ? "CURRENT TRADE" : "NEXT OPPORTUNITY"
+    table.cell(tbl, 0, 43, nxHeader, text_color=hFg, text_size=size.small, bgcolor=hBg, text_halign=text.align_left)
+    table.cell(tbl, 1, 43, nxAction, text_color=nxActCol, text_size=size.small, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 2, 43, "", text_size=size.small, bgcolor=hBg)
+    table.cell(tbl, 3, 43, "V4.1D", text_color=color.new(#FFC107, 0), text_size=size.tiny, bgcolor=hBg, text_halign=text.align_center)
+    table.cell(tbl, 4, 43, "", text_size=size.small, bgcolor=hBg)
+
+    // Row 44 — Entry + SL
+    table.cell(tbl, 0, 44, "NX Entry", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 44, not na(nxEntry) ? str.tostring(nxEntry, format.mintick) : "—", text_color=not na(nxEntry) ? color.new(#FFC107, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 44, "NX Stop", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 3, 44, not na(nxSL) ? str.tostring(nxSL, format.mintick) : "—", text_color=not na(nxSL) ? color.new(#FF1744, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 4, 44, "", text_size=size.small)
+
+    // Row 45 — TP1 + TP2 + R:R
+    table.cell(tbl, 0, 45, "NX TP1", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 45, not na(nxTP1) ? str.tostring(nxTP1, format.mintick) : "—", text_color=not na(nxTP1) ? color.new(#00E676, 70) : mFg, text_size=size.small, text_halign=text.align_center)
+    table.cell(tbl, 2, 45, "NX TP2", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 3, 45, not na(nxTP2) ? str.tostring(nxTP2, format.mintick) : "—", text_color=not na(nxTP2) ? color.new(#00E676, 0) : mFg, text_size=size.small, text_halign=text.align_center)
+    color nxRRCol = not na(nxRR) and nxRR >= 2.5 ? color.new(#00E676, 0) : not na(nxRR) and nxRR >= 2.0 ? color.new(#26A69A, 0) : not na(nxRR) and nxRR >= 1.5 ? color.new(#FFC107, 0) : color.new(#EF5350, 0)
+    table.cell(tbl, 4, 45, not na(nxRR) ? str.tostring(nxRR, "#.#") + "R" : "", text_color=not na(nxRR) ? nxRRCol : mFg, text_size=size.small, text_halign=text.align_center)
+
+    // Row 46 — Reason + Expiry
+    table.cell(tbl, 0, 46, "Reason", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 46, nxReason, text_color=nxActCol, text_size=size.tiny, text_halign=text.align_center)
+    table.cell(tbl, 2, 46, "", text_size=size.small)
+    table.cell(tbl, 3, 46, nxExpiry != "" ? nxExpiry : "", text_color=color.new(#8b949e, 0), text_size=size.tiny, text_halign=text.align_center)
+    table.cell(tbl, 4, 46, "", text_size=size.small)
+
+    // Row 47 — Blocked / Previous Setup Info
+    string nxPrevLabel = nxBlocked != "" ? nxBlocked : prevSetupInfo != "" ? prevSetupInfo : ""
+    color nxPrevCol = nxBlocked != "" ? color.new(#FF1744, 0) : prevSetupInfo != "" ? color.new(#8b949e, 0) : mFg
+    table.cell(tbl, 0, 47, nxBlocked != "" ? "Blocked" : prevSetupInfo != "" ? "Previous" : "", text_color=mFg, text_size=size.small, text_halign=text.align_left)
+    table.cell(tbl, 1, 47, nxPrevLabel, text_color=nxPrevCol, text_size=size.tiny, text_halign=text.align_center)
+    table.cell(tbl, 2, 47, "", text_size=size.small)
+    table.cell(tbl, 3, 47, "", text_size=size.small)
+    table.cell(tbl, 4, 47, "", text_size=size.small)
 
 // ══════════════════════════════════════════════════════════
 //  ALERTS (BUY & SELL — rich dynamic messages)
