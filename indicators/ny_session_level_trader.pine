@@ -24,6 +24,8 @@ hmaFastLen   = input.int(55, "15m HMA length", minval = 5, group = G_STRAT)
 dLookback    = input.int(15, "Daily candles for direction", minval = 5, group = G_STRAT)
 dHoldDays    = input.int(10, "Trend = last N daily closes on one side of HMA", minval = 3, group = G_STRAT)
 rangeLen     = input.int(30, "Range lookback (4H bars)", minval = 6, group = G_STRAT)
+addMode      = input.string("After 2R partial", "New trade while one is open", options = ["After 2R partial", "After breakeven (1R)", "Never"], group = G_STRAT, tooltip = "Checklist 'adding back after partials': every open trade must be risk-free (stop at breakeven or better) and the new setup must be at a different level. 'After breakeven' relaxes 'after partials' to 1R.")
+maxOpen      = input.int(3, "Max open trades", minval = 1, maxval = 10, group = G_STRAT)
 
 stopMode     = input.string("Structure", "Stop placement", options = ["Structure", "ATR multiple"], group = G_STOP, tooltip = "Structure = beyond the rejection wick (trend) or the range edge (range) + buffer. ATR multiple = what the PDF calculator does.")
 bufPips      = input.float(2.5, "Buffer beyond wick / edge (pips)", minval = 0, step = 0.5, group = G_STOP)
@@ -32,6 +34,8 @@ stopMinAtr   = input.float(0.5, "Min stop (× ATR)", minval = 0, step = 0.1, gro
 stopMaxAtr   = input.float(1.5, "Max stop (× ATR)", minval = 0.1, step = 0.1, group = G_STOP)
 tightMode    = input.string("Skip trade", "Stop tighter than min", options = ["Widen to min", "Skip trade"], group = G_STOP)
 rangeTpPct   = input.float(75, "Range target (% of way to opposite edge)", minval = 10, maxval = 100, group = G_STOP)
+exitModel    = input.string("Trail after 2R", "Runner exit (trend trades)", options = ["Trail after 2R", "Fixed target"], group = G_STOP, tooltip = "Trail: after 50% is closed at 2R, the stop follows each new confirmed 15m swing (+ buffer) and the target is ignored. Fixed: the runner exits at the target. Flip this and compare the Model results row.")
+trailLen     = input.int(2, "Trail: 15m swing strength (bars each side)", minval = 1, maxval = 10, group = G_STOP)
 
 useMonthly   = input.bool(true, "Monthly POC / VAH / VAL (previous month)", group = G_LVL)
 useWeekly    = input.bool(true, "Weekly POC / VAH / VAL (previous week)", group = G_LVL)
@@ -52,6 +56,7 @@ maxCandleAtr = input.float(2.0, "Oversized candle (× ATR)", minval = 0.5, step 
 chaseAtr     = input.float(2.5, "Chasing: 3-bar move (× ATR)", minval = 0.5, step = 0.1, group = G_KILL)
 chopBars     = input.int(6, "Chop: candles checked", minval = 3, maxval = 20, group = G_KILL)
 chopAlt      = input.int(4, "Chop: min colour flips", minval = 2, maxval = 19, group = G_KILL)
+chopIndec    = input.int(2, "Chop: indecision candles that cost one flip", minval = 1, maxval = 20, group = G_KILL, tooltip = "Indecision candle = body under 35% of its range, or wicks of 25%+ on both sides. With this many of them, one fewer colour flip is enough to call chop.")
 maxRetest    = input.int(2, "Range: max retests of an edge", minval = 1, group = G_KILL)
 vwapFlatAtr  = input.float(0.25, "VWAP flat if 8-bar slope < ATR ×", minval = 0, step = 0.05, group = G_KILL)
 newsTimes    = input.string("", "Red-flag news today (NY time, e.g. 08:30,10:00)", group = G_KILL, tooltip = "Pine cannot read forexfactory. Type today's red-flag times here; no entries within ± the blackout. Note: the times apply to every day on the chart, including history.")
@@ -269,12 +274,20 @@ int hState   = hSlope > 0.1 * atr ? 1 : hSlope < -0.1 * atr ? -1 : 0
 
 bool inWin = not na(time(timeframe.period, sessWin, TZ))
 
+// Chop: alternating colours, or slightly fewer flips plus doji / two-sided-wick candles
 f_chop() =>
     int flips = 0
-    for j = 1 to chopBars - 1
-        if (close[j] > open[j]) != (close[j + 1] > open[j + 1])
+    int indec = 0
+    for j = 1 to chopBars
+        float rng = high[j] - low[j]
+        float body = math.abs(close[j] - open[j])
+        float upW = high[j] - math.max(open[j], close[j])
+        float dnW = math.min(open[j], close[j]) - low[j]
+        if rng > 0 and (body < 0.35 * rng or (upW >= 0.25 * rng and dnW >= 0.25 * rng))
+            indec += 1
+        if j < chopBars and (close[j] > open[j]) != (close[j + 1] > open[j + 1])
             flips += 1
-    flips >= chopAlt
+    flips >= chopAlt or (flips >= chopAlt - 1 and indec >= chopIndec)
 bool chop = f_chop()
 
 var array<int> newsMin = array.new<int>()
@@ -304,16 +317,19 @@ f_lots(float sd) =>
 // ─────────────────────────────────────────────────────────────────────────────
 // Trade model state (one position at a time; also drives the results row)
 // ─────────────────────────────────────────────────────────────────────────────
-var int   tDir    = 0
-var int   tBar    = na
-var float tEntry  = na
-var float tStop   = na
-var float tSL0    = na
-var float tTP     = na
-var float tRisk   = na
-var bool  t1R     = false
-var bool  t2R     = false
-var bool  tTrend  = false
+type Trade
+    int   dir
+    int   bar
+    float entry
+    float stop
+    float tp
+    float risk
+    float lvl
+    bool  trend
+    bool  hit1R = false
+    bool  hit2R = false
+
+var array<Trade> trades = array.new<Trade>()
 var int   nTrades = 0
 var int   nWin    = 0
 var int   nLoss   = 0
@@ -481,50 +497,93 @@ f_eval(int dir, bool enabled, array<float> lp, array<string> ln) =>
                 why := "Retest #" + str.tostring(retest) + " of range edge"
             if why == "" and not (isRange ? vAgree >= 0 : vAgree == 1) and score < 2
                 why := "VWAP " + (vAgree == -1 ? "against" : "flat") + " and level has no confluence"
-            if why == "" and tDir != 0
-                why := "Trade already open"
+            if why == "" and trades.size() > 0
+                bool riskFree = true
+                bool sameLvl  = false
+                for t in trades
+                    if not (addMode == "After breakeven (1R)" ? t.hit1R : t.hit2R)
+                        riskFree := false
+                    if math.abs(t.lvl - lvl) <= clusterPips * pip
+                        sameLvl := true
+                if addMode == "Never"
+                    why := "Trade already open"
+                else if trades.size() >= maxOpen
+                    why := "Max " + str.tostring(maxOpen) + " open trades"
+                else if not riskFree
+                    why := "Open trade not risk-free yet (" + (addMode == "After breakeven (1R)" ? "needs 1R" : "needs 2R partial") + ")"
+                else if sameLvl
+                    why := "Same level as an open trade"
     [pat, why, lvl, names, score, sl, tp, rr]
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Manage the open trade (before looking for a new one)
-// Model: BE at 1R; trend = 50% off at 2R, rest at target; range = all at target.
-// Same-bar stop and target -> stop assumed first. No spread, no trailing.
+// Manage open trades (before looking for new ones)
+// Model: BE at 1R. Trend: 50% off at 2R, runner trails 15m swings (or exits at
+// target in "Fixed target" mode). Range: all at target.
+// Same-bar stop and target -> stop assumed first. No spread or slippage.
 // ─────────────────────────────────────────────────────────────────────────────
+float pivLo = ta.pivotlow(low, trailLen, trailLen)
+float pivHi = ta.pivothigh(high, trailLen, trailLen)
+var float lastLo    = na
+var float lastHi    = na
+var int   lastLoBar = na
+var int   lastHiBar = na
+if not na(pivLo)
+    lastLo    := pivLo
+    lastLoBar := bar_index - trailLen
+if not na(pivHi)
+    lastHi    := pivHi
+    lastHiBar := bar_index - trailLen
+
 string mgmtMsg = ""
-if tDir != 0 and bar_index > tBar
-    float favour = tDir == 1 ? high - tEntry : tEntry - low
-    bool stopHit = tDir == 1 ? low <= tStop : high >= tStop
-    bool tpHit   = tDir == 1 ? high >= tTP : low <= tTP
-    float exitR  = na
-    if stopHit
-        float bank = tTrend and t2R ? 1.0 : 0.0
-        float w    = tTrend and t2R ? 0.5 : 1.0
-        exitR   := bank + w * tDir * (tStop - tEntry) / tRisk
-        mgmtMsg := t1R ? "stopped at breakeven" : "STOP LOSS hit"
-    else
-        if not t1R and favour >= tRisk
-            t1R     := true
-            tStop   := tEntry
-            mgmtMsg := "+1R reached: move stop to breakeven " + f_px(tEntry)
-        if not t2R and favour >= 2 * tRisk
-            t2R     := true
-            mgmtMsg := tTrend ? "+2R reached: close 50%, trail the rest behind 15m swings" : "+2R reached: consider closing 100% (range)"
-        if tpHit
-            float bank = tTrend and t2R ? 1.0 : 0.0
-            float w    = tTrend and t2R ? 0.5 : 1.0
-            exitR   := bank + w * tDir * (tTP - tEntry) / tRisk
-            mgmtMsg := "TARGET hit"
-    if not na(exitR)
-        nTrades += 1
-        if exitR > 0.01
-            nWin += 1
-        else if exitR < -0.01
-            nLoss += 1
-        else
-            nFlat += 1
-        sumR    += exitR
-        mgmtMsg := mgmtMsg + " · result " + str.tostring(exitR, "#.##") + "R"
-        tDir    := 0
+int nT = trades.size()
+if nT > 0
+    for i = nT - 1 to 0
+        Trade t = trades.get(i)
+        if bar_index > t.bar
+            string side    = t.dir == 1 ? "BUY" : "SELL"
+            string msg     = ""
+            bool trailing  = t.trend and exitModel == "Trail after 2R"
+            float favour   = t.dir == 1 ? high - t.entry : t.entry - low
+            bool stopHit   = t.dir == 1 ? low <= t.stop : high >= t.stop
+            float exitR    = na
+            if stopHit
+                float bank = t.trend and t.hit2R ? 1.0 : 0.0
+                float w    = t.trend and t.hit2R ? 0.5 : 1.0
+                exitR := bank + w * t.dir * (t.stop - t.entry) / t.risk
+                msg   := t.hit2R and trailing ? "trailing stop hit" : t.hit1R ? "stopped at breakeven" : "STOP LOSS hit"
+            else
+                if not t.hit1R and favour >= t.risk
+                    t.hit1R := true
+                    t.stop  := t.entry
+                    msg     := "+1R: move stop to breakeven " + f_px(t.entry)
+                if not t.hit2R and favour >= 2 * t.risk
+                    t.hit2R := true
+                    msg     := t.trend ? "+2R: close 50%" + (trailing ? ", trail the rest behind 15m swings" : ", rest at target " + f_px(t.tp)) : "+2R: consider closing 100% (range)"
+                bool tpHit = t.dir == 1 ? high >= t.tp : low <= t.tp
+                if tpHit and not (trailing and t.hit2R)
+                    float bank = t.trend and t.hit2R ? 1.0 : 0.0
+                    float w    = t.trend and t.hit2R ? 0.5 : 1.0
+                    exitR := bank + w * t.dir * (t.tp - t.entry) / t.risk
+                    msg   := "TARGET hit"
+                // Trail the runner behind the latest 15m swing formed after entry
+                if na(exitR) and trailing and t.hit2R
+                    float cand = t.dir == 1 ? (lastLoBar > t.bar ? lastLo - bufPips * pip : na) : (lastHiBar > t.bar ? lastHi + bufPips * pip : na)
+                    if not na(cand) and (t.dir == 1 ? cand > t.stop and cand < close : cand < t.stop and cand > close)
+                        t.stop := cand
+                        msg    := (msg == "" ? "" : msg + "; ") + "trail stop to " + f_px(cand)
+            if not na(exitR)
+                nTrades += 1
+                if exitR > 0.01
+                    nWin += 1
+                else if exitR < -0.01
+                    nLoss += 1
+                else
+                    nFlat += 1
+                sumR += exitR
+                msg  := msg + " · result " + str.tostring(exitR, "#.##") + "R"
+                trades.remove(i)
+            if msg != ""
+                mgmtMsg := (mgmtMsg == "" ? "" : mgmtMsg + "\n") + side + " " + f_px(t.entry) + ": " + msg
 if alertMgmt and mgmtMsg != ""
     alert(syminfo.ticker + " · " + mgmtMsg, alert.freq_once_per_bar_close)
 
@@ -594,21 +653,12 @@ if sigDir != 0
     line.new(bar_index, be, x2, be, color = color.gray, style = line.style_dotted)
     line.new(bar_index, twoR, x2, twoR, color = color.green, style = line.style_dotted)
 
-    tDir   := sigDir
-    tBar   := bar_index
-    tEntry := close
-    tStop  := sigSL
-    tSL0   := sigSL
-    tTP    := sigTP
-    tRisk  := sigRisk
-    t1R    := false
-    t2R    := false
-    tTrend := not isRange
+    trades.push(Trade.new(sigDir, bar_index, close, sigSL, sigTP, sigRisk, sigDir == 1 ? lL : sL, not isRange))
 
 if showBlocked and active
-    if lPat != "" and lWhy != "" and lWhy != "Trade already open"
+    if lPat != "" and lWhy != ""
         label.new(bar_index, low, "", yloc = yloc.belowbar, style = label.style_xcross, color = color.gray, size = size.tiny, tooltip = "Long " + lPat + " @ " + lNames + " blocked: " + lWhy)
-    if sPat != "" and sWhy != "" and sWhy != "Trade already open"
+    if sPat != "" and sWhy != ""
         label.new(bar_index, high, "", yloc = yloc.abovebar, style = label.style_xcross, color = color.gray, size = size.tiny, tooltip = "Short " + sPat + " @ " + sNames + " blocked: " + sWhy)
 
 // Optional heads-up when price first reaches a level inside the window
@@ -688,7 +738,10 @@ if barstate.islast and showTable
     color  vCol = isRange ? (vState == 0 ? ok : warn) : (vState == biasDir ? ok : warn)
     string hTxt = hState == 1 ? "rising" : hState == -1 ? "falling" : "flat"
     color  hCol = isRange or hState == biasDir ? ok : warn
-    string trd  = tDir == 0 ? "none" : (tDir == 1 ? "BUY" : "SELL") + " @ " + f_px(tEntry) + " · SL " + f_px(tStop) + " · TP " + f_px(tTP)
+    string trd  = "none"
+    if trades.size() > 0
+        Trade lt = trades.last()
+        trd := str.tostring(trades.size()) + " open · last " + (lt.dir == 1 ? "BUY" : "SELL") + " @ " + f_px(lt.entry) + " · SL " + f_px(lt.stop) + " · TP " + f_px(lt.tp)
     string res  = nTrades == 0 ? "no trades yet" : str.tostring(nTrades) + " trades · " + str.tostring(100.0 * nWin / nTrades, "#") + "% win · avg " + str.tostring(sumR / nTrades, "#.##") + "R · total " + str.tostring(sumR, "#.#") + "R"
     f_row(0, "Chart", timeframe.period == "15" ? "15m ✓" : "Switch to 15m!", timeframe.period == "15" ? ok : bad)
     f_row(1, "Mode", modeTxt, isRange ? warn : ok)
@@ -699,6 +752,6 @@ if barstate.islast and showTable
     f_row(6, "Window", inWin ? "OPEN" : "closed", inWin ? ok : color.gray)
     f_row(7, "News", newsBlock ? "BLACKOUT" : newsMin.size() == 0 ? "none entered" : "clear", newsBlock ? bad : newsMin.size() == 0 ? warn : ok)
     f_row(8, "Chop", chop ? "YES · wait" : "no", chop ? bad : ok)
-    f_row(9, "Open trade", trd, tDir == 0 ? color.gray : color.white)
-    f_row(10, "Model results", res, sumR >= 0 ? ok : bad)
+    f_row(9, "Open trades", trd, trades.size() == 0 ? color.gray : color.white)
+    f_row(10, "Model (" + (exitModel == "Fixed target" ? "fixed" : "trail") + ")", res, sumR >= 0 ? ok : bad)
     f_row(11, "Daily ATR", str.tostring(dAtr / pip, "#") + " pips", color.white)

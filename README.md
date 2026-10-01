@@ -31,8 +31,10 @@ That single alert carries entry signals, 1R/2R/stop/target management messages, 
 | Patterns | WICK (≥50% wick past level, body on your side), ENGULF, 2xTAP (two touches, pulled away in between, never closed through), B&R (trend only). Candle close only. |
 | Stop | Beyond rejection wick (trend) or range edge (range) + 2.5 pips. Must be 0.5–1.5× ATR; outside that the trade is skipped (wick dictates, ATR validates). "Widen to min" is available in settings for testing. |
 | Target | Trend: next level beyond entry (outside the entry level's cluster). Range: 75% toward opposite edge. Must be ≥ 2R. |
-| Kill switches | Shorting into support / buying into resistance (room < 2R), chasing (3-bar move > 2.5× ATR), oversized candle (> 2× ATR), missed (>15 pips from level), ATR < 4, no man's land (no target level), range middle/narrow (< 3× ATR or < 3× stop), 3rd+ retest of a range edge, outside 9:30–12:00 ET, news blackout, chop (≥4 colour flips in 6 candles). |
-| One trade at a time | No new signal while the modelled trade is open. |
+| Kill switches | Shorting into support / buying into resistance (room < 2R), chasing (3-bar move > 2.5× ATR), oversized candle (> 2× ATR), missed (>15 pips from level), ATR < 4, no man's land (no target level), range middle/narrow (< 3× ATR or < 3× stop), 3rd+ retest of a range edge, outside 9:30–12:00 ET, news blackout, chop. |
+| Chop | ≥4 colour flips in the last 6 candles, or 3 flips plus ≥2 indecision candles (body < 35% of range, or 25%+ wicks on both sides). |
+| Adding trades | A new signal is allowed while trades are open only if every open trade is risk-free (default: 50% taken at 2R, option: stop at breakeven), the new level is not the same level, and fewer than 3 trades are open. Total live risk therefore never exceeds 0.25%. Blocked setups show the reason, including this one. |
+| Trade management | BE at 1R. Trend: 50% off at 2R, runner trails behind each new confirmed 15m swing + buffer (alert on every move), or exits at the target in *Fixed target* mode. Range: all at target. |
 
 Blocked setups are marked with a grey × — hover to see which kill switch stopped it.
 
@@ -40,5 +42,5 @@ Blocked setups are marked with a grey × — hover to see which kill switch stop
 - **VRVP** depends on what is on your screen; it is not reproducible in code and is replaced by the weekly/monthly profiles.
 - **News**: Pine cannot read forexfactory. Type the day's red-flag times into the input; they apply to every day on the chart.
 - **Profiles use tick volume** with fixed rows, so levels will differ by a few pips from TradingView's own PVP drawing.
-- **Model results** in the table: BE at 1R, trend trades take 50% at 2R and the rest at target, range trades exit at target, stop assumed first when a candle hits both. No spread, slippage or trailing. Treat it as a sanity check, not a backtest.
+- **Model results** in the table follow the trade-management rules above, assuming the stop is hit first when a candle hits both. No spread or slippage. Flip *Runner exit* between trail and fixed target to compare them. Treat it as a sanity check, not a backtest.
 - **Lot size** converts the quote currency to your account currency (`request.currency_rate`). The PDF calculator's example (EURUSD, 6 pips, 300 CAD → 5.00 lots) assumes $10/pip in CAD and over-sizes EURUSD/GBPUSD trades by the USD/CAD rate (~35–40%).
