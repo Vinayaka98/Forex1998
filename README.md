@@ -1,1 +1,44 @@
 # Forex1998
+
+## NY Session Level Trader (TradingView, Pine Script v6)
+
+`indicators/ny_session_level_trader.pine` automates the *NY session checklist v4*:
+Daily bias → 4H zones → 15m confirmation, with every kill switch applied, and
+fires an alert with **market BUY/SELL, entry, stop, target, BE / 2R levels and lot size**.
+
+### Install
+1. TradingView → Pine Editor → paste the file → *Add to chart*.
+2. Use a **15m** chart of EURUSD, GBPUSD, USDJPY or USDCAD.
+3. Settings → *Position size*: set account size and account currency (default 120000 CAD, 0.25%).
+
+### Alerts (one-time setup, once per pair)
+Pine scripts cannot create alerts themselves. On each pair's chart:
+*Create alert* → Condition: **NY Session Level Trader** → **Any alert() function call** → Trigger: *Once per bar close*.
+That single alert carries entry signals, 1R/2R/stop/target management messages, and (optional) level-reached heads-ups.
+
+### How the checklist is translated into rules
+
+| Checklist item | What the code does |
+|---|---|
+| Daily bias / trend vs range | Trend LONG if yesterday's close > Daily HMA 200, > close 15 days ago, and the last 10 closes all above the HMA (mirror for SHORT). Otherwise RANGE. Can be overridden manually. |
+| Monthly / Weekly PVP | POC/VAH/VAL of the **previous** month/week, computed from the chart's tick volume (70% value area). |
+| 4H swings (max 4–6) | 4H pivots (5 bars each side) with ≥30-pip reversal, last 21 days, max 3 highs + 3 lows. |
+| Confluence | Number of levels within 8 pips. ≥2 = strong level. |
+| Range edges | Highest high / lowest low of the last 30 completed 4H bars. |
+| VWAP traffic light | Session VWAP 8-bar slope. Trend: must agree, or level must be strong. Range: flat/agree, or strong level. |
+| ATR ≥ 4 pips | 15m ATR(14) in pips. |
+| HMA 55 | Not a filter; flagged as "consider 1.5R exit" when not with you. |
+| Patterns | WICK (≥50% wick past level, body on your side), ENGULF, 2xTAP (two touches, pulled away in between, never closed through), B&R (trend only). Candle close only. |
+| Stop | Beyond rejection wick (trend) or range edge (range) + 2.5 pips. Must be 0.5–1.5× ATR; tighter stops are widened to 0.5× ATR by default. |
+| Target | Trend: next level beyond entry (outside the entry level's cluster). Range: 75% toward opposite edge. Must be ≥ 2R. |
+| Kill switches | Shorting into support / buying into resistance (room < 2R), chasing (3-bar move > 2.5× ATR), oversized candle (> 2× ATR), missed (>15 pips from level), ATR < 4, no man's land (no target level), range middle/narrow (< 3× ATR or < 3× stop), 3rd+ retest of a range edge, outside 9:30–12:00 ET, news blackout, chop (≥4 colour flips in 6 candles). |
+| One trade at a time | No new signal while the modelled trade is open. |
+
+Blocked setups are marked with a grey × — hover to see which kill switch stopped it.
+
+### Known gaps (read before trusting it)
+- **VRVP** depends on what is on your screen; it is not reproducible in code and is replaced by the weekly/monthly profiles.
+- **News**: Pine cannot read forexfactory. Type the day's red-flag times into the input; they apply to every day on the chart.
+- **Profiles use tick volume** with fixed rows, so levels will differ by a few pips from TradingView's own PVP drawing.
+- **Model results** in the table: BE at 1R, trend trades take 50% at 2R and the rest at target, range trades exit at target, stop assumed first when a candle hits both. No spread, slippage or trailing. Treat it as a sanity check, not a backtest.
+- **Lot size** converts the quote currency to your account currency (`request.currency_rate`). The PDF calculator's example (EURUSD, 6 pips, 300 CAD → 5.00 lots) assumes $10/pip in CAD and over-sizes EURUSD/GBPUSD trades by the USD/CAD rate (~35–40%).
