@@ -1,0 +1,902 @@
+//@version=6
+// Level Trader STRATEGY: identical signals to indicators/level_trader.pine, but
+// places real orders in TradingView's Strategy Tester so you get a trade list,
+// equity curve and drawdown. Generated from the indicator: change rules there first.
+//
+// Level Trader: the "NY session checklist v4" on three timeframes.
+//   15m chart: Daily bias  -> 4H zones     -> 15m trigger (9:30-12:00 NY only)
+//   4H chart : 4H HMA 200 bias, previous-week profile + 4H swings, 4H trigger
+//   D chart  : Daily HMA 200 bias, previous-month profile + Daily swings, Daily trigger
+// Use on EUR/USD, GBP/USD, USD/JPY or USD/CAD. Signals fire on candle close only (no repainting).
+strategy("Level Trader Strategy", shorttitle = "Levels Strat", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 60, max_bars_back = 500,
+     initial_capital = 120000, currency = currency.CAD, default_qty_type = strategy.fixed, pyramiding = 10,
+     process_orders_on_close = true, slippage = 5, commission_type = strategy.commission.percent, commission_value = 0)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+const string TZ      = "America/New_York"
+const string G_STRAT = "Strategy"
+const string G_STOP  = "Stops & targets"
+const string G_LVL   = "Levels"
+const string G_KILL  = "Kill switches"
+const string G_RISK  = "Position size"
+const string G_SHOW  = "Display & alerts"
+
+tfMode       = input.string("Auto (chart)", "Timeframe stack", options = ["Auto (chart)", "15m intraday", "4H swing", "Daily position"], group = G_STRAT, tooltip = "Auto picks the stack from the chart: under 1H = 15m intraday, 1H-12H = 4H swing, Daily or higher = Daily position. 4H and Daily use only the chart's own HMA 200 / HMA 55, swings and one volume profile (week on 4H, month on Daily); no VWAP.")
+scale4h      = input.float(4.0, "Pip-setting multiplier on 4H", minval = 1, step = 0.5, group = G_STRAT, tooltip = "Every pip input below is written for the 15m chart and multiplied by this on the 4H stack (e.g. 3-pip tolerance -> 12 pips).")
+scaleD       = input.float(10.0, "Pip-setting multiplier on Daily", minval = 1, step = 0.5, group = G_STRAT)
+biasMode     = input.string("Auto", "Bias / mode", options = ["Auto", "Trend LONG", "Trend SHORT", "Range"], group = G_STRAT, tooltip = "Auto derives the bias from the higher timeframe (HMA 200 + direction of the last N candles). Set it manually to enforce the bias you wrote down in Step 1.")
+sessWin      = input.session("0930-1200", "Entry window (New York time, 15m stack only)", group = G_STRAT)
+minRR        = input.float(2.0, "Min reward : risk", minval = 0.5, step = 0.1, group = G_STRAT)
+hmaSlowLen   = input.int(200, "Bias-timeframe HMA length", minval = 10, group = G_STRAT)
+hmaFastLen   = input.int(55, "Chart HMA length (momentum)", minval = 5, group = G_STRAT)
+dLookback    = input.int(15, "Bias candles for direction", minval = 5, group = G_STRAT)
+dHoldDays    = input.int(10, "Trend = last N bias closes on one side of HMA", minval = 3, group = G_STRAT)
+rangeLen     = input.int(30, "Range lookback (zone-timeframe bars)", minval = 6, group = G_STRAT)
+addMode      = input.string("After 2R partial", "New trade while one is open", options = ["After 2R partial", "After breakeven (1R)", "Never"], group = G_STRAT, tooltip = "Checklist 'adding back after partials': every open trade must be risk-free (stop at breakeven or better) and the new setup must be at a different level. 'After breakeven' relaxes 'after partials' to 1R.")
+maxOpen      = input.int(3, "Max open trades", minval = 1, maxval = 10, group = G_STRAT)
+
+stopMode     = input.string("Structure", "Stop placement", options = ["Structure", "ATR multiple"], group = G_STOP, tooltip = "Structure = beyond the rejection wick (trend) or the range edge (range) + buffer. ATR multiple = what the PDF calculator does.")
+bufPips      = input.float(2.5, "Buffer beyond wick / edge (pips)", minval = 0, step = 0.5, group = G_STOP)
+stopAtrMult  = input.float(1.0, "Stop = ATR × (ATR mode)", minval = 0.1, step = 0.1, group = G_STOP)
+stopMinAtr   = input.float(0.5, "Min stop (× ATR)", minval = 0, step = 0.1, group = G_STOP)
+stopMaxAtr   = input.float(1.5, "Max stop (× ATR)", minval = 0.1, step = 0.1, group = G_STOP)
+tightMode    = input.string("Skip trade", "Stop tighter than min", options = ["Widen to min", "Skip trade"], group = G_STOP)
+rangeTpPct   = input.float(75, "Range target (% of way to opposite edge)", minval = 10, maxval = 100, group = G_STOP)
+exitModel    = input.string("Trail after 2R", "Runner exit (trend trades)", options = ["Trail after 2R", "Fixed target"], group = G_STOP, tooltip = "Trail: after 50% is closed at 2R, the stop follows each new confirmed chart swing (+ buffer) and the target is ignored. Fixed: the runner exits at the target. Flip this and compare the Model results row.")
+trailLen     = input.int(2, "Trail: chart swing strength (bars each side)", minval = 1, maxval = 10, group = G_STOP)
+
+useMonthly   = input.bool(true, "Monthly POC / VAH / VAL (15m stack)", group = G_LVL)
+useWeekly    = input.bool(true, "Profile POC / VAH / VAL (prev week; prev month on Daily)", group = G_LVL)
+useSwings    = input.bool(true, "Zone-timeframe swing highs / lows", group = G_LVL)
+useRound     = input.bool(false, "Round numbers (00 / 50)", group = G_LVL)
+useGaps      = input.bool(true, "Unfilled gaps: confluence + target magnets", group = G_LVL, tooltip = "Price gaps (candle low above previous high, or high below previous low) on the chart timeframe. Never an entry level on their own: a gap edge near a level adds confluence, and a gap between entry and target is noted in the alert.")
+minGapPips   = input.float(1.0, "Min gap size (pips, 15m)", minval = 0.1, step = 0.1, group = G_LVL)
+maxGaps      = input.int(20, "Max gaps tracked", minval = 1, maxval = 50, group = G_LVL)
+vaPct        = input.float(70, "Value area %", minval = 50, maxval = 95, group = G_LVL)
+pBins        = input.int(80, "Profile rows", minval = 20, maxval = 300, group = G_LVL)
+swingLen     = input.int(5, "Zone swing strength (bars each side)", minval = 2, group = G_LVL)
+swingMinPips = input.float(30, "Min reversal from swing (pips)", minval = 0, group = G_LVL)
+swingDays    = input.int(21, "Swing lookback (days, 15m stack)", minval = 3, group = G_LVL)
+maxSwings    = input.int(3, "Max swings per side", minval = 1, maxval = 10, group = G_LVL)
+tolPips      = input.float(3.0, "Touch tolerance (pips)", minval = 0, step = 0.5, group = G_LVL)
+clusterPips  = input.float(8.0, "Confluence radius (pips)", minval = 0, step = 0.5, group = G_LVL)
+
+minAtrPips   = input.float(4.0, "Min chart ATR (pips)", minval = 0, step = 0.5, group = G_KILL)
+missPips     = input.float(15, "Missed it: max distance from level (pips)", minval = 1, group = G_KILL)
+maxCandleAtr = input.float(2.0, "Oversized candle (× ATR)", minval = 0.5, step = 0.1, group = G_KILL)
+chaseAtr     = input.float(2.5, "Chasing: 3-bar move (× ATR)", minval = 0.5, step = 0.1, group = G_KILL)
+chopBars     = input.int(6, "Chop: candles checked", minval = 3, maxval = 20, group = G_KILL)
+chopAlt      = input.int(4, "Chop: min colour flips", minval = 2, maxval = 19, group = G_KILL)
+chopIndec    = input.int(2, "Chop: indecision candles that cost one flip", minval = 1, maxval = 20, group = G_KILL, tooltip = "Indecision candle = body under 35% of its range, or wicks of 25%+ on both sides. With this many of them, one fewer colour flip is enough to call chop.")
+maxRetest    = input.int(2, "Range: max retests of an edge", minval = 1, group = G_KILL)
+rangeHmaFilt = input.bool(true, "Range: only trade the HMA 200 side", group = G_KILL, tooltip = "No range longs while the bias-timeframe close is below its HMA 200 (Daily on the 15m chart), no range shorts while it is above. Turn off and compare the Model results row to measure what it does.")
+vwapFlatAtr  = input.float(0.25, "VWAP flat if 8-bar slope < ATR ×", minval = 0, step = 0.05, group = G_KILL)
+newsTimes    = input.string("", "Red-flag news today (NY time, e.g. 08:30,10:00; 15m stack only)", group = G_KILL, tooltip = "Pine cannot read forexfactory. Type today's red-flag times here; no entries within ± the blackout. Note: the times apply to every day on the chart, including history.")
+newsBuf      = input.int(15, "News blackout ± minutes", minval = 0, group = G_KILL)
+
+accountSize  = input.float(120000, "Account size", minval = 1, group = G_RISK)
+accountCcy   = input.string("CAD", "Account currency", group = G_RISK)
+riskPct      = input.float(0.25, "Risk per trade %", minval = 0.01, step = 0.05, group = G_RISK)
+spreadPips   = input.float(1.0, "Spread + commission per trade (pips)", minval = 0, step = 0.1, group = G_RISK, tooltip = "Your real round-trip cost. Charged to every modelled trade and used by the spread kill switch. Commission of $X per lot round trip ≈ X/10 pips on USD-quoted pairs.")
+maxSpreadPct = input.float(20, "Kill: cost above % of stop", minval = 1, maxval = 100, group = G_RISK)
+
+showLevels   = input.bool(true, "Draw levels", group = G_SHOW)
+showBlocked  = input.bool(true, "Mark blocked setups (hover for reason)", group = G_SHOW)
+showTable    = input.bool(true, "Status table", group = G_SHOW)
+showDailyHma = input.bool(false, "Plot bias-timeframe HMA", group = G_SHOW)
+alertMgmt    = input.bool(true, "Alerts: 1R / 2R / stop / target", group = G_SHOW)
+alertZone    = input.bool(false, "Alerts: price reached a level", group = G_SHOW)
+
+const float WICK_RATIO = 0.5
+const int   TAP_BARS   = 12
+const int   BR_BARS    = 32
+const int   VWAP_BARS  = 8
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Basics
+// ─────────────────────────────────────────────────────────────────────────────
+float pip     = syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Timeframe stack: which timeframes play the Daily / 4H / 15m roles
+// ─────────────────────────────────────────────────────────────────────────────
+string stack = tfMode == "15m intraday" ? "15m" : tfMode == "4H swing" ? "4H" : tfMode == "Daily position" ? "D" : timeframe.in_seconds() < 3600 ? "15m" : timeframe.in_seconds() < 86400 ? "4H" : "D"
+bool   is15   = stack == "15m"
+// 15m: Daily bias, 4H zones, week + month profiles, session VWAP / SVP (the PDF).
+// 4H / D: everything from the chart itself, one profile (week / month), no VWAP.
+string biasTF = is15 ? "D" : timeframe.period
+string zoneTF = is15 ? "240" : timeframe.period
+string zoneNm = is15 ? "4H" : stack == "4H" ? "4H" : "D"
+string biasNm = is15 ? "Daily" : zoneNm
+string loTF   = is15 ? "W" : stack == "4H" ? "W" : "M"
+string hiTF   = "M"
+string loPfx  = is15 ? "w" : stack == "4H" ? "w" : "m"
+string hiPfx  = "m"
+string anchTF = is15 ? "D" : stack == "4H" ? "W" : "M"
+string tfTag  = "[" + stack + "] "
+float  sc     = is15 ? 1.0 : stack == "4H" ? scale4h : scaleD
+
+float tol       = tolPips * sc * pip
+float bufEff    = bufPips * sc
+float clusterEf = clusterPips * sc
+float missEff   = missPips * sc
+float swingMinE = swingMinPips * sc
+float minAtrEff = minAtrPips * sc
+int   swingDayE = math.round(swingDays * sc)
+float atr     = ta.atr(14)
+float atrPips = atr / pip
+
+f_px(float p) => str.tostring(p, format.mintick)
+f_pips(float d) => str.tostring(d / pip, "#.0")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Daily: bias (Step 1)
+// ─────────────────────────────────────────────────────────────────────────────
+f_daily() =>
+    float h      = ta.hma(close, hmaSlowLen)
+    float nAbove = math.sum(close > h ? 1.0 : 0.0, dHoldDays)
+    [close[1], h[1], close[1 + dLookback], nAbove[1], ta.atr(14)[1]]
+
+[dClose, dHma, dCloseBack, dNAbove, dAtr] = request.security(syminfo.tickerid, biasTF, f_daily(), lookahead = barmerge.lookahead_on)
+
+bool dUp = dClose > dHma and dClose > dCloseBack and dNAbove == dHoldDays
+bool dDn = dClose < dHma and dClose < dCloseBack and dNAbove == 0
+int biasDir = switch biasMode
+    "Trend LONG"  => 1
+    "Trend SHORT" => -1
+    "Range"       => 0
+    => dUp ? 1 : dDn ? -1 : 0
+bool isRange = biasDir == 0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 4H: swings and range edges (Step 2)
+// ─────────────────────────────────────────────────────────────────────────────
+f_touchEpisodes(float lvl, bool top, int n, float t) =>
+    int cnt = 0
+    bool prev = false
+    for i = 0 to n - 1
+        bool hit = top ? high[i] >= lvl - t : low[i] <= lvl + t
+        if hit and not prev
+            cnt += 1
+        prev := hit
+    cnt
+
+f_h4() =>
+    float ph    = ta.pivothigh(high, swingLen, swingLen)
+    float pl    = ta.pivotlow(low, swingLen, swingLen)
+    float phRev = ph - ta.lowest(low, swingLen)
+    float plRev = ta.highest(high, swingLen) - pl
+    float rh    = ta.highest(high, rangeLen)
+    float rl    = ta.lowest(low, rangeLen)
+    int topEp   = f_touchEpisodes(rh, true, rangeLen, tol)
+    int botEp   = f_touchEpisodes(rl, false, rangeLen, tol)
+    bool lastTop = high >= rh - tol
+    bool lastBot = low <= rl + tol
+    [ph[1], phRev[1], pl[1], plRev[1], rh[1], rl[1], topEp[1], botEp[1], lastTop[1], lastBot[1], time[1]]
+
+[h4Ph, h4PhRev, h4Pl, h4PlRev, rHigh, rLow, h4TopEp, h4BotEp, h4LastTop, h4LastBot, h4Time] = request.security(syminfo.tickerid, zoneTF, f_h4(), lookahead = barmerge.lookahead_on)
+
+// Retests of each range edge after the bar that set it (1 = first retest)
+int topRetest = (h4LastTop ? h4TopEp : h4TopEp + 1) - 1
+int botRetest = (h4LastBot ? h4BotEp : h4BotEp + 1) - 1
+
+f_cap(array<float> p, array<int> t, array<bool> h, bool hi) =>
+    int cnt = 0
+    int n = p.size()
+    if n > 0
+        for i = n - 1 to 0
+            if h.get(i) == hi
+                cnt += 1
+                if cnt > maxSwings
+                    p.remove(i)
+                    t.remove(i)
+                    h.remove(i)
+    cnt
+
+var array<float> swP = array.new<float>()
+var array<int>   swT = array.new<int>()
+var array<bool>  swH = array.new<bool>()
+bool h4New = h4Time != h4Time[1]
+if useSwings and h4New
+    if not na(h4Ph) and h4PhRev >= swingMinE * pip
+        swP.push(h4Ph)
+        swT.push(h4Time)
+        swH.push(true)
+    if not na(h4Pl) and h4PlRev >= swingMinE * pip
+        swP.push(h4Pl)
+        swT.push(h4Time)
+        swH.push(false)
+    f_cap(swP, swT, swH, true)
+    f_cap(swP, swT, swH, false)
+while swT.size() > 0 and swT.first() < time - swingDayE * 86400000
+    swP.shift()
+    swT.shift()
+    swH.shift()
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Volume profiles: previous week / previous month / developing session
+// Built from the chart's own (tick) volume, so values will differ slightly
+// from TradingView's drawn Periodic Volume Profile.
+// ─────────────────────────────────────────────────────────────────────────────
+f_profile(array<float> hs, array<float> ls, array<float> vs) =>
+    float poc = na
+    float vah = na
+    float val = na
+    int n = hs.size()
+    if n > 0
+        float top  = hs.max()
+        float bot  = ls.min()
+        float step = (top - bot) / pBins
+        if step > 0
+            array<float> rows = array.new<float>(pBins, 0.0)
+            for i = 0 to n - 1
+                int a = math.max(0, math.min(pBins - 1, math.floor((ls.get(i) - bot) / step)))
+                int b = math.max(0, math.min(pBins - 1, math.floor((hs.get(i) - bot) / step)))
+                float share = vs.get(i) / (b - a + 1)
+                for r = a to b
+                    rows.set(r, rows.get(r) + share)
+            int pocRow  = rows.indexof(rows.max())
+            float goal  = rows.sum() * vaPct / 100
+            float acc   = rows.get(pocRow)
+            int up = pocRow
+            int dn = pocRow
+            while acc < goal and (up < pBins - 1 or dn > 0)
+                float nu = up < pBins - 1 ? rows.get(up + 1) : -1.0
+                float nd = dn > 0 ? rows.get(dn - 1) : -1.0
+                if nu >= nd
+                    up  += 1
+                    acc += nu
+                else
+                    dn  -= 1
+                    acc += nd
+            poc := bot + (pocRow + 0.5) * step
+            vah := bot + (up + 1) * step
+            val := bot + dn * step
+    [poc, vah, val]
+
+var array<float> wH = array.new<float>()
+var array<float> wL = array.new<float>()
+var array<float> wV = array.new<float>()
+var array<float> mH = array.new<float>()
+var array<float> mL = array.new<float>()
+var array<float> mV = array.new<float>()
+var array<float> sesH = array.new<float>()
+var array<float> sesL = array.new<float>()
+var array<float> sesV = array.new<float>()
+var float wPoc = na
+var float wVah = na
+var float wVal = na
+var float mPoc = na
+var float mVah = na
+var float mVal = na
+
+float vol = na(volume) or volume <= 0 ? 1.0 : volume
+if timeframe.change(loTF)
+    [p1, p2, p3] = f_profile(wH, wL, wV)
+    wPoc := p1
+    wVah := p2
+    wVal := p3
+    wH.clear()
+    wL.clear()
+    wV.clear()
+if timeframe.change(hiTF)
+    [q1, q2, q3] = f_profile(mH, mL, mV)
+    mPoc := q1
+    mVah := q2
+    mVal := q3
+    mH.clear()
+    mL.clear()
+    mV.clear()
+if timeframe.change(anchTF)
+    sesH.clear()
+    sesL.clear()
+    sesV.clear()
+wH.push(high)
+wL.push(low)
+wV.push(vol)
+mH.push(high)
+mL.push(low)
+mV.push(vol)
+sesH.push(high)
+sesL.push(low)
+sesV.push(vol)
+
+// Session volume profile POC (SVP) as confluence on the 15m stack: a magnet, not an entry level
+float devPoc = na
+if is15
+    [dp1, dp2, dp3] = f_profile(sesH, sesL, sesV)
+    devPoc := dp1
+
+// Unfilled gaps on the chart timeframe. Partial fills shrink the gap; a full fill removes it.
+var array<float> gTop = array.new<float>()
+var array<float> gBot = array.new<float>()
+var array<int>   gBar = array.new<int>()
+if useGaps
+    int gn = gTop.size()
+    if gn > 0
+        for i = gn - 1 to 0
+            float gt = gTop.get(i)
+            float gb = gBot.get(i)
+            if low <= gb and high >= gt
+                gTop.remove(i)
+                gBot.remove(i)
+                gBar.remove(i)
+            else if high > gb and high < gt and low <= gb
+                gBot.set(i, high)
+            else if low < gt and low > gb and high >= gt
+                gTop.set(i, low)
+    float minGap = minGapPips * sc * pip
+    if low - high[1] >= minGap
+        gTop.push(low)
+        gBot.push(high[1])
+        gBar.push(bar_index)
+    else if low[1] - high >= minGap
+        gTop.push(low[1])
+        gBot.push(high)
+        gBar.push(bar_index)
+    while gTop.size() > maxGaps
+        gTop.shift()
+        gBot.shift()
+        gBar.shift()
+
+// True when an unfilled gap edge sits within the confluence radius of price L
+f_gapNear(float L) =>
+    bool near = false
+    int gn = gTop.size()
+    if gn > 0
+        for i = 0 to gn - 1
+            if math.abs(gTop.get(i) - L) <= clusterEf * pip or math.abs(gBot.get(i) - L) <= clusterEf * pip
+                near := true
+    near
+
+// Unfilled gaps lying between entry and target (magnets along the path)
+f_gapPath(int dir, float entry, float tp) =>
+    string out = ""
+    int gn = gTop.size()
+    if gn > 0 and not na(tp)
+        for i = 0 to gn - 1
+            float gt = gTop.get(i)
+            float gb = gBot.get(i)
+            bool between = dir == 1 ? gb > entry and gb < tp : gt < entry and gt > tp
+            if between
+                out := (out == "" ? "" : out + ", ") + f_px(gb) + "-" + f_px(gt)
+    out
+
+// ─────────────────────────────────────────────────────────────────────────────
+// 15m context (Step 3)
+// ─────────────────────────────────────────────────────────────────────────────
+float vw     = ta.vwap(hlc3, timeframe.change(anchTF))
+float vSlope = vw - vw[VWAP_BARS]
+int vState   = vSlope > vwapFlatAtr * atr ? 1 : vSlope < -vwapFlatAtr * atr ? -1 : 0
+
+float hFast  = ta.hma(close, hmaFastLen)
+float hSlope = hFast - hFast[3]
+int hState   = hSlope > 0.1 * atr ? 1 : hSlope < -0.1 * atr ? -1 : 0
+
+bool inWin = not is15 or not na(time(timeframe.period, sessWin, TZ))
+
+// Chop: alternating colours, or slightly fewer flips plus doji / two-sided-wick candles
+f_chop() =>
+    int flips = 0
+    int indec = 0
+    for j = 1 to chopBars
+        float rng = high[j] - low[j]
+        float body = math.abs(close[j] - open[j])
+        float upW = high[j] - math.max(open[j], close[j])
+        float dnW = math.min(open[j], close[j]) - low[j]
+        if rng > 0 and (body < 0.35 * rng or (upW >= 0.25 * rng and dnW >= 0.25 * rng))
+            indec += 1
+        if j < chopBars and (close[j] > open[j]) != (close[j + 1] > open[j + 1])
+            flips += 1
+    flips >= chopAlt or (flips >= chopAlt - 1 and indec >= chopIndec)
+bool chop = f_chop()
+
+var array<int> newsMin = array.new<int>()
+if barstate.isfirst
+    string cleaned = str.replace_all(newsTimes, " ", "")
+    if str.length(cleaned) > 0
+        for part in str.split(cleaned, ",")
+            array<string> hm = str.split(part, ":")
+            if hm.size() == 2
+                float hh = str.tonumber(hm.get(0))
+                float mm = str.tonumber(hm.get(1))
+                if not na(hh) and not na(mm)
+                    newsMin.push(int(hh * 60 + mm))
+int barEndMin = hour(time_close, TZ) * 60 + minute(time_close, TZ)
+bool newsBlock = false
+for nm in newsMin
+    if is15 and math.abs(barEndMin - nm) <= newsBuf
+        newsBlock := true
+
+// Position sizing: convert the quote currency's pip value into the account currency
+float qRate   = request.currency_rate(syminfo.currency, accountCcy, true)
+float riskAmt = accountSize * riskPct / 100
+f_lots(float sd) =>
+    float perLot = sd * 100000 * qRate
+    perLot > 0 ? math.floor(riskAmt / perLot * 100) / 100 : na
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Trade model state (one position at a time; also drives the results row)
+// ─────────────────────────────────────────────────────────────────────────────
+type Trade
+    int   dir
+    int   bar
+    float entry
+    float stop
+    float tp
+    float risk
+    float lvl
+    bool  trend
+    bool  hit1R = false
+    bool  hit2R = false
+    string id   = ""
+
+var array<Trade> trades = array.new<Trade>()
+var int   nTrades = 0
+var int   nWin    = 0
+var int   nLoss   = 0
+var int   nFlat   = 0
+var float sumR    = 0.0
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Level helpers
+// ─────────────────────────────────────────────────────────────────────────────
+f_add(array<float> lp, array<string> ln, float v, string name) =>
+    if not na(v)
+        lp.push(v)
+        ln.push(name)
+
+f_score(float L, array<float> lp) =>
+    int cnt = (not na(devPoc) and math.abs(devPoc - L) <= clusterEf * pip ? 1 : 0) + (f_gapNear(L) ? 1 : 0)
+    for v in lp
+        if math.abs(v - L) <= clusterEf * pip
+            cnt += 1
+    cnt
+
+f_names(float L, array<float> lp, array<string> ln) =>
+    string out = not na(devPoc) and math.abs(devPoc - L) <= clusterEf * pip ? "sPOC" : ""
+    if f_gapNear(L)
+        out := out == "" ? "Gap edge" : out + " + Gap edge"
+    int n = lp.size()
+    if n > 0
+        for i = 0 to n - 1
+            if math.abs(lp.get(i) - L) <= clusterEf * pip
+                string nm = ln.get(i)
+                if not str.contains(out, nm)
+                    out := out == "" ? nm : out + " + " + nm
+    out
+
+// Nearest level beyond entry in the trade direction, outside the entry level's own cluster
+f_nextLevel(int dir, float entry, float L, array<float> lp) =>
+    float best = na
+    for v in lp
+        bool beyond = dir == 1 ? v > entry + tol : v < entry - tol
+        if beyond and math.abs(v - L) > clusterEf * pip
+            if na(best) or (dir == 1 ? v < best : v > best)
+                best := v
+    best
+
+// Confirmation pattern at level L on the just-closed candle.
+// Returns pattern name ("" = none) and the extreme of the rejection (for the stop).
+f_pattern(int dir, float L, bool allowBR) =>
+    string pat = ""
+    float ext  = na
+    float rng  = high - low
+    bool touch     = dir == 1 ? low <= L + tol : high >= L - tol
+    bool touchPrev = dir == 1 ? low[1] <= L + tol : high[1] >= L - tol
+    bool closeOk   = dir == 1 ? close > L : close < L
+    if closeOk and rng > 0 and (touch or touchPrev)
+        bool bodyOk   = dir == 1 ? math.min(open, close) >= L - tol : math.max(open, close) <= L + tol
+        float wickLen = dir == 1 ? math.min(open, close) - low : high - math.max(open, close)
+        bool bodyDir  = dir == 1 ? close > open : close < open
+        bool wick     = touch and bodyOk and wickLen >= WICK_RATIO * rng
+        bool engulf   = bodyDir and (dir == 1 ? close[1] < open[1] and close >= open[1] and open <= close[1] : close[1] > open[1] and close <= open[1] and open >= close[1])
+        bool rejects  = touch and bodyOk and (wick or bodyDir)
+        bool tap = false
+        bool br  = false
+        if rejects
+            // 2xTAP: an earlier touch, price pulled away, level never closed through
+            bool away = false
+            for j = 1 to TAP_BARS
+                bool tj = dir == 1 ? low[j] <= L + tol : high[j] >= L - tol
+                bool cj = dir == 1 ? close[j] > L : close[j] < L
+                if not cj
+                    break
+                if tj and away
+                    tap := true
+                    break
+                if not tj
+                    away := true
+            // B&R: price was on the other side, broke through, now retests from our side
+            if allowBR
+                bool sawBreak = false
+                for j = 1 to BR_BARS
+                    bool ours   = dir == 1 ? close[j] > L + tol : close[j] < L - tol
+                    bool theirs = dir == 1 ? close[j] < L - tol : close[j] > L + tol
+                    if theirs
+                        br := sawBreak
+                        break
+                    if ours
+                        sawBreak := true
+        pat := tap ? "2xTAP" : br ? "B&R" : engulf ? "ENGULF" : wick ? "WICK" : ""
+        ext := dir == 1 ? (touchPrev ? math.min(low, low[1]) : low) : (touchPrev ? math.max(high, high[1]) : high)
+    [pat, ext]
+
+// Full evaluation for one direction: level + pattern + stop/target + every kill switch.
+f_eval(int dir, bool enabled, array<float> lp, array<string> ln) =>
+    string pat   = ""
+    string why   = ""
+    string names = ""
+    float lvl    = na
+    float ext    = na
+    int score    = 0
+    float sl     = na
+    float tp     = na
+    float rr     = na
+    if enabled
+        if isRange
+            float edge = dir == 1 ? rLow : rHigh
+            if not na(edge)
+                [p, e] = f_pattern(dir, edge, false)
+                if p != ""
+                    pat   := p
+                    ext   := e
+                    lvl   := edge
+                    score := 1 + f_score(edge, lp)
+                    string others = f_names(edge, lp, ln)
+                    names := (dir == 1 ? "Range low" : "Range high") + (others == "" ? "" : " + " + others)
+        else
+            float extRef = dir == 1 ? low : high
+            for lv in lp
+                [p, e] = f_pattern(dir, lv, true)
+                if p != ""
+                    int s = f_score(lv, lp)
+                    if na(lvl) or s > score or (s == score and math.abs(lv - extRef) < math.abs(lvl - extRef))
+                        pat   := p
+                        ext   := e
+                        lvl   := lv
+                        score := s
+            if not na(lvl)
+                names := f_names(lvl, lp, ln)
+        if pat != ""
+            float entry = close
+            float buf   = bufEff * pip
+            if stopMode == "ATR multiple"
+                sl := entry - dir * stopAtrMult * atr
+            else if isRange
+                sl := dir == 1 ? math.min(lvl, ext) - buf : math.max(lvl, ext) + buf
+            else
+                sl := ext - dir * buf
+            if math.abs(entry - sl) < stopMinAtr * atr
+                if tightMode == "Widen to min"
+                    sl := entry - dir * stopMinAtr * atr
+                else
+                    why := "Stop tighter than " + str.tostring(stopMinAtr) + "× ATR"
+            float sd = math.abs(entry - sl)
+            tp := isRange ? entry + ((dir == 1 ? rHigh : rLow) - entry) * rangeTpPct / 100 : f_nextLevel(dir, entry, lvl, lp)
+            rr := na(tp) or sd == 0 ? na : dir * (tp - entry) / sd
+            int retest = dir == 1 ? botRetest : topRetest
+            int vAgree = vState * dir
+            if why == "" and atrPips < minAtrEff
+                why := "ATR " + str.tostring(atrPips, "#.0") + " pips < " + str.tostring(minAtrEff) + " (market asleep)"
+            if why == "" and newsBlock
+                why := "News blackout"
+            if why == "" and chop
+                why := "Chop: candles alternating"
+            if why == "" and math.abs(close - lvl) > missEff * pip
+                why := "Missed it: " + f_pips(math.abs(close - lvl)) + " pips from level"
+            if why == "" and high - low > maxCandleAtr * atr
+                why := "Oversized confirmation candle"
+            if why == "" and dir * (close - close[3]) > chaseAtr * atr
+                why := "Chasing: move already happened"
+            if why == "" and sd > stopMaxAtr * atr
+                why := "Stop " + str.tostring(sd / atr, "#.0") + "× ATR (max " + str.tostring(stopMaxAtr) + ")"
+            if why == "" and na(tp)
+                why := "No level for a target (no man's land)"
+            if why == "" and not na(rr) and rr < minRR
+                why := "Only " + str.tostring(rr, "#.0") + "R of room (" + (dir == 1 ? "buying into resistance" : "shorting into support") + ")"
+            if why == "" and isRange and (rHigh - rLow < 3 * atr or rHigh - rLow < 3 * sd)
+                why := "Range too narrow"
+            if why == "" and isRange and retest > maxRetest
+                why := "Retest #" + str.tostring(retest) + " of range edge"
+            if why == "" and isRange and rangeHmaFilt and not na(dHma) and (dir == 1 ? dClose < dHma : dClose > dHma)
+                why := "Range " + (dir == 1 ? "long below " : "short above ") + biasNm + " HMA " + str.tostring(hmaSlowLen)
+            if why == "" and sd > 0 and spreadPips * pip / sd * 100 > maxSpreadPct
+                why := "Cost " + str.tostring(spreadPips, "#.0") + " pips = " + str.tostring(spreadPips * pip / sd * 100, "#") + "% of stop"
+            if why == "" and is15 and not (isRange ? vAgree >= 0 : vAgree == 1) and score < 2
+                why := "VWAP " + (vAgree == -1 ? "against" : "flat") + " and level has no confluence"
+            if why == "" and trades.size() > 0
+                bool riskFree = true
+                bool sameLvl  = false
+                for t in trades
+                    if not (addMode == "After breakeven (1R)" ? t.hit1R : t.hit2R)
+                        riskFree := false
+                    if math.abs(t.lvl - lvl) <= clusterEf * pip
+                        sameLvl := true
+                if addMode == "Never"
+                    why := "Trade already open"
+                else if trades.size() >= maxOpen
+                    why := "Max " + str.tostring(maxOpen) + " open trades"
+                else if not riskFree
+                    why := "Open trade not risk-free yet (" + (addMode == "After breakeven (1R)" ? "needs 1R" : "needs 2R partial") + ")"
+                else if sameLvl
+                    why := "Same level as an open trade"
+    [pat, why, lvl, names, score, sl, tp, rr]
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Manage open trades (before looking for new ones)
+// Model: BE at 1R. Trend: 50% off at 2R, runner trails 15m swings (or exits at
+// target in "Fixed target" mode). Range: all at target.
+// Same-bar stop and target -> stop assumed first. No spread or slippage.
+// ─────────────────────────────────────────────────────────────────────────────
+float pivLo = ta.pivotlow(low, trailLen, trailLen)
+float pivHi = ta.pivothigh(high, trailLen, trailLen)
+var float lastLo    = na
+var float lastHi    = na
+var int   lastLoBar = na
+var int   lastHiBar = na
+if not na(pivLo)
+    lastLo    := pivLo
+    lastLoBar := bar_index - trailLen
+if not na(pivHi)
+    lastHi    := pivHi
+    lastHiBar := bar_index - trailLen
+
+string mgmtMsg = ""
+int nT = trades.size()
+if nT > 0
+    for i = nT - 1 to 0
+        Trade t = trades.get(i)
+        if bar_index > t.bar
+            string side    = t.dir == 1 ? "BUY" : "SELL"
+            string msg     = ""
+            bool trailing  = t.trend and exitModel == "Trail after 2R"
+            float favour   = t.dir == 1 ? high - t.entry : t.entry - low
+            bool stopHit   = t.dir == 1 ? low <= t.stop : high >= t.stop
+            float exitR    = na
+            if stopHit
+                float bank = t.trend and t.hit2R ? 1.0 : 0.0
+                float w    = t.trend and t.hit2R ? 0.5 : 1.0
+                exitR := bank + w * t.dir * (t.stop - t.entry) / t.risk
+                msg   := t.hit2R and trailing ? "trailing stop hit" : t.hit1R ? "stopped at breakeven" : "STOP LOSS hit"
+            else
+                if not t.hit1R and favour >= t.risk
+                    t.hit1R := true
+                    t.stop  := t.entry
+                    msg     := "+1R: move stop to breakeven " + f_px(t.entry)
+                if not t.hit2R and favour >= 2 * t.risk
+                    t.hit2R := true
+                    msg     := t.trend ? "+2R: close 50%" + (trailing ? ", trail the rest behind chart swings" : ", rest at target " + f_px(t.tp)) : "+2R: consider closing 100% (range)"
+                bool tpHit = t.dir == 1 ? high >= t.tp : low <= t.tp
+                if tpHit and not (trailing and t.hit2R)
+                    float bank = t.trend and t.hit2R ? 1.0 : 0.0
+                    float w    = t.trend and t.hit2R ? 0.5 : 1.0
+                    exitR := bank + w * t.dir * (t.tp - t.entry) / t.risk
+                    msg   := "TARGET hit"
+                // Trail the runner behind the latest 15m swing formed after entry
+                if na(exitR) and trailing and t.hit2R
+                    float cand = t.dir == 1 ? (lastLoBar > t.bar ? lastLo - bufEff * pip : na) : (lastHiBar > t.bar ? lastHi + bufEff * pip : na)
+                    if not na(cand) and (t.dir == 1 ? cand > t.stop and cand < close : cand < t.stop and cand > close)
+                        t.stop := cand
+                        msg    := (msg == "" ? "" : msg + "; ") + "trail stop to " + f_px(cand)
+            if not na(exitR)
+                exitR   -= spreadPips * pip / t.risk
+                nTrades += 1
+                if exitR > 0.01
+                    nWin += 1
+                else if exitR < -0.01
+                    nLoss += 1
+                else
+                    nFlat += 1
+                sumR += exitR
+                msg  := msg + " · result " + str.tostring(exitR, "#.##") + "R"
+                trades.remove(i)
+            if msg != ""
+                mgmtMsg := (mgmtMsg == "" ? "" : mgmtMsg + "\n") + side + " " + f_px(t.entry) + ": " + msg
+if alertMgmt and mgmtMsg != ""
+    alert(tfTag + syminfo.ticker + " · " + mgmtMsg, alert.freq_once_per_bar_close)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build today's level set
+// ─────────────────────────────────────────────────────────────────────────────
+array<float>  lvlP = array.new<float>()
+array<string> lvlN = array.new<string>()
+if useMonthly and is15
+    f_add(lvlP, lvlN, mPoc, hiPfx + "POC")
+    f_add(lvlP, lvlN, mVah, hiPfx + "VAH")
+    f_add(lvlP, lvlN, mVal, hiPfx + "VAL")
+if useWeekly
+    f_add(lvlP, lvlN, wPoc, loPfx + "POC")
+    f_add(lvlP, lvlN, wVah, loPfx + "VAH")
+    f_add(lvlP, lvlN, wVal, loPfx + "VAL")
+if useSwings and swP.size() > 0
+    for i = 0 to swP.size() - 1
+        f_add(lvlP, lvlN, swP.get(i), swH.get(i) ? zoneNm + " high" : zoneNm + " low")
+if useRound
+    float rStep = 50 * pip
+    float rBase = math.floor(close / rStep) * rStep
+    for k = -1 to 2
+        f_add(lvlP, lvlN, rBase + k * rStep, "Round")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Signals (candle close only, inside the window)
+// ─────────────────────────────────────────────────────────────────────────────
+bool active = barstate.isconfirmed and inWin
+[lPat, lWhy, lL, lNames, lScore, lSL, lTP, lRR] = f_eval(1, active and (isRange or biasDir == 1), lvlP, lvlN)
+[sPat, sWhy, sL, sNames, sScore, sSL, sTP, sRR] = f_eval(-1, active and (isRange or biasDir == -1), lvlP, lvlN)
+
+bool longOk  = lPat != "" and lWhy == ""
+bool shortOk = sPat != "" and sWhy == ""
+int sigDir   = longOk and not shortOk ? 1 : shortOk and not longOk ? -1 : 0
+
+float  sigSL    = sigDir == 1 ? lSL : sigDir == -1 ? sSL : na
+float  sigTP    = sigDir == 1 ? lTP : sigDir == -1 ? sTP : na
+float  sigRR    = sigDir == 1 ? lRR : sigDir == -1 ? sRR : na
+string sigPat   = sigDir == 1 ? lPat : sPat
+string sigNames = sigDir == 1 ? lNames : sNames
+float  sigRisk  = math.abs(close - sigSL)
+float  sigLots  = sigDir != 0 ? f_lots(sigRisk) : na
+
+if sigDir != 0
+    bool   caution = hState != sigDir
+    string side    = sigDir == 1 ? "BUY" : "SELL"
+    string lotsTxt = na(sigLots) ? "n/a (check account currency)" : str.tostring(sigLots, "#.00")
+    float  be      = close + sigDir * sigRisk
+    string gapPath = f_gapPath(sigDir, close, sigTP)
+    bool   gapAtTp = f_gapNear(sigTP)
+    float  twoR    = close + sigDir * 2 * sigRisk
+    string msg = tfTag + syminfo.ticker + " · MARKET " + side + " @ " + f_px(close) +
+         "\nSL " + f_px(sigSL) + " (" + f_pips(sigRisk) + " pips; cost " + str.tostring(spreadPips * pip / sigRisk * 100, "#") + "% of stop)" +
+         "\nTP " + f_px(sigTP) + " (" + f_pips(math.abs(sigTP - close)) + " pips · " + str.tostring(sigRR, "#.0") + "R)" +
+         "\n1R → stop to BE: " + f_px(be) +
+         "\n2R → " + (isRange ? "consider closing all" : "close 50%") + ": " + f_px(twoR) +
+         "\nSize " + lotsTxt + " lots (" + str.tostring(riskPct) + "% = " + str.tostring(riskAmt, "#") + " " + accountCcy + ")" +
+         "\n" + (isRange ? "RANGE" : "TREND") + " · " + sigPat + " @ " + sigNames +
+         (gapAtTp ? "\nTarget lines up with an unfilled gap (stronger target)" : gapPath != "" ? "\nUnfilled gap on the way to target: " + gapPath : "") +
+         (caution ? "\n⚠ HMA 55 not with you: consider exiting at 1.5R" : "")
+    alert(msg, alert.freq_once_per_bar_close)
+
+    color c = sigDir == 1 ? color.new(color.teal, 0) : color.new(color.red, 0)
+    label.new(bar_index, sigDir == 1 ? low : high, msg, style = sigDir == 1 ? label.style_label_up : label.style_label_down, color = c, textcolor = color.white, size = size.small, textalign = text.align_left)
+    int x2 = bar_index + 20
+    line.new(bar_index, close, x2, close, color = color.gray, width = 2)
+    line.new(bar_index, sigSL, x2, sigSL, color = color.red, width = 2)
+    line.new(bar_index, sigTP, x2, sigTP, color = color.green, width = 2)
+    line.new(bar_index, be, x2, be, color = color.gray, style = line.style_dotted)
+    line.new(bar_index, twoR, x2, twoR, color = color.green, style = line.style_dotted)
+
+    // Market order at the signal candle's close (process_orders_on_close), sized for riskPct of accountSize
+    string oid  = (sigDir == 1 ? "L" : "S") + str.tostring(bar_index)
+    float  lotQ = na(sigLots) ? math.floor(riskAmt / (sigRisk * 100000) * 100) / 100 : sigLots
+    if lotQ > 0
+        strategy.entry(oid, sigDir == 1 ? strategy.long : strategy.short, qty = lotQ * 100000, comment = (isRange ? "RANGE " : "TREND ") + sigPat)
+        Trade nt = Trade.new(sigDir, bar_index, close, sigSL, sigTP, sigRisk, sigDir == 1 ? lL : sL, not isRange)
+        nt.id := oid
+        trades.push(nt)
+
+if showBlocked and active
+    if lPat != "" and lWhy != ""
+        label.new(bar_index, low, "", yloc = yloc.belowbar, style = label.style_xcross, color = color.gray, size = size.tiny, tooltip = "Long " + lPat + " @ " + lNames + " blocked: " + lWhy)
+    if sPat != "" and sWhy != ""
+        label.new(bar_index, high, "", yloc = yloc.abovebar, style = label.style_xcross, color = color.gray, size = size.tiny, tooltip = "Short " + sPat + " @ " + sNames + " blocked: " + sWhy)
+
+// Optional heads-up when price first reaches a level inside the window
+if alertZone and active and sigDir == 0
+    array<float>  zP = lvlP.copy()
+    array<string> zN = lvlN.copy()
+    if isRange
+        f_add(zP, zN, rHigh, "Range high")
+        f_add(zP, zN, rLow, "Range low")
+    int zn = zP.size()
+    if zn > 0
+        for i = 0 to zn - 1
+            float z = zP.get(i)
+            bool nowAt  = high >= z - tol and low <= z + tol
+            bool wasAt  = high[1] >= z - tol and low[1] <= z + tol
+            if nowAt and not wasAt
+                alert(tfTag + syminfo.ticker + " at " + zN.get(i) + " " + f_px(z) + " · watch the 15m for confirmation", alert.freq_once_per_bar_close)
+                break
+
+// Static-message alert conditions (for users who prefer them over "Any alert() function call")
+plot(sigDir != 0 ? sigSL : na, "Signal SL", display = display.none)
+plot(sigDir != 0 ? sigTP : na, "Signal TP", display = display.none)
+plot(sigLots, "Signal lots", display = display.none)
+alertcondition(sigDir == 1, "Market BUY", "{{ticker}} MARKET BUY @ {{close}} | SL {{plot(\"Signal SL\")}} | TP {{plot(\"Signal TP\")}} | lots {{plot(\"Signal lots\")}}")
+alertcondition(sigDir == -1, "Market SELL", "{{ticker}} MARKET SELL @ {{close}} | SL {{plot(\"Signal SL\")}} | TP {{plot(\"Signal TP\")}} | lots {{plot(\"Signal lots\")}}")
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visuals
+// ─────────────────────────────────────────────────────────────────────────────
+plotshape(sigDir == 1, "Buy", shape.triangleup, location.belowbar, color.teal, size = size.small)
+plotshape(sigDir == -1, "Sell", shape.triangledown, location.abovebar, color.red, size = size.small)
+plot(is15 ? vw : na, "VWAP", color.new(color.orange, 0))
+plot(hFast, "HMA 55", hState == 1 ? color.teal : hState == -1 ? color.maroon : color.gray, 2)
+plot(showDailyHma ? dHma : na, "Daily HMA 200", color.purple, style = plot.style_stepline)
+bgcolor(inWin ? color.new(color.blue, 94) : na, title = "Entry window")
+
+var array<line>  lvLines = array.new<line>()
+var array<label> lvLabs  = array.new<label>()
+var array<box>   gapBoxes = array.new<box>()
+f_drawLevel(float p, string txt, color col, string sty) =>
+    if not na(p)
+        lvLines.push(line.new(bar_index - 60, p, bar_index + 10, p, color = col, style = sty, extend = extend.none))
+        lvLabs.push(label.new(bar_index + 10, p, txt + " " + f_px(p), style = label.style_label_left, color = color.new(col, 85), textcolor = col, size = size.tiny))
+
+if barstate.islast and showLevels
+    for l in lvLines
+        l.delete()
+    for lb in lvLabs
+        lb.delete()
+    lvLines.clear()
+    lvLabs.clear()
+    int n = lvlP.size()
+    if n > 0
+        for i = 0 to n - 1
+            string nm = lvlN.get(i)
+            color col = str.startswith(nm, hiPfx) ? color.purple : str.startswith(nm, loPfx) ? color.blue : nm == "Round" ? color.gray : color.orange
+            f_drawLevel(lvlP.get(i), nm, col, line.style_solid)
+    if isRange
+        f_drawLevel(rHigh, "Range high", color.silver, line.style_dashed)
+        f_drawLevel(rLow, "Range low", color.silver, line.style_dashed)
+    if is15
+        f_drawLevel(devPoc, "Session POC", color.yellow, line.style_dotted)
+    for b in gapBoxes
+        b.delete()
+    gapBoxes.clear()
+    if useGaps and gTop.size() > 0
+        for i = 0 to gTop.size() - 1
+            gapBoxes.push(box.new(gBar.get(i), gTop.get(i), bar_index + 10, gBot.get(i), border_color = color.new(color.fuchsia, 40), bgcolor = color.new(color.fuchsia, 88)))
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Status table
+// ─────────────────────────────────────────────────────────────────────────────
+var table tb = table.new(position.top_right, 2, 12, bgcolor = color.new(color.black, 20), border_width = 1)
+f_row(int r, string k, string v, color col) =>
+    table.cell(tb, 0, r, k, text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, r, v, text_color = col, text_size = size.small, text_halign = text.align_left)
+
+if barstate.islast and showTable
+    color ok   = color.lime
+    color warn = color.yellow
+    color bad  = color.red
+    string modeTxt = (isRange ? "RANGE · both edges" : biasDir == 1 ? "TREND · LONG only" : "TREND · SHORT only") + (biasMode == "Auto" ? " (auto)" : " (manual)")
+    string vTxt = vState == 1 ? "rising" : vState == -1 ? "falling" : "flat"
+    color  vCol = isRange ? (vState == 0 ? ok : warn) : (vState == biasDir ? ok : warn)
+    string hTxt = hState == 1 ? "rising" : hState == -1 ? "falling" : "flat"
+    color  hCol = isRange or hState == biasDir ? ok : warn
+    string trd  = "none"
+    if trades.size() > 0
+        Trade lt = trades.last()
+        trd := str.tostring(trades.size()) + " open · last " + (lt.dir == 1 ? "BUY" : "SELL") + " @ " + f_px(lt.entry) + " · SL " + f_px(lt.stop) + " · TP " + f_px(lt.tp)
+    string res  = (rangeHmaFilt ? "HMA filter ON · " : "HMA filter OFF · ") + (nTrades == 0 ? "no trades yet" : str.tostring(nTrades) + " trades · " + str.tostring(100.0 * nWin / nTrades, "#") + "% win · avg " + str.tostring(sumR / nTrades, "#.##") + "R · total " + str.tostring(sumR, "#.#") + "R")
+    bool tfOk = stack == "15m" ? timeframe.period == "15" : stack == "4H" ? timeframe.period == "240" : timeframe.period == "D"
+    f_row(0, "Stack", stack + " · bias " + biasNm + " · zones " + zoneNm + (tfOk ? " ✓" : " · chart TF mismatch!"), tfOk ? ok : bad)
+    f_row(1, "Mode", modeTxt, isRange ? warn : ok)
+    f_row(2, biasNm + " vs HMA " + str.tostring(hmaSlowLen), na(dHma) ? "n/a" : dClose > dHma ? "above" : "below", color.white)
+    f_row(3, "Chart ATR", str.tostring(atrPips, "#.0") + " pips", atrPips >= minAtrEff ? ok : bad)
+    f_row(4, "VWAP", is15 ? vTxt : "not used on " + stack, is15 ? vCol : color.gray)
+    f_row(5, "HMA " + str.tostring(hmaFastLen), hTxt, hCol)
+    f_row(6, "Window", not is15 ? "n/a (any close)" : inWin ? "OPEN" : "closed", inWin ? ok : color.gray)
+    f_row(7, "News", not is15 ? "check calendar yourself" : newsBlock ? "BLACKOUT" : newsMin.size() == 0 ? "none entered" : "clear", newsBlock ? bad : newsMin.size() == 0 ? warn : ok)
+    f_row(8, "Chop", chop ? "YES · wait" : "no", chop ? bad : ok)
+    f_row(9, "Open trades", trd, trades.size() == 0 ? color.gray : color.white)
+    f_row(10, "Model (" + (exitModel == "Fixed target" ? "fixed" : "trail") + ")", res, sumR >= 0 ? ok : bad)
+    f_row(11, biasNm + " ATR", str.tostring(dAtr / pip, "#") + " pips", color.white)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Broker orders: mirror the trade model's stops / targets every bar.
+// Trend: 50% limit at 2R, runner on the (breakeven / trailing) stop, or at the
+// target in "Fixed target" mode. Range: everything at the target.
+// ─────────────────────────────────────────────────────────────────────────────
+for t in trades
+    if t.id != ""
+        bool trailing = t.trend and exitModel == "Trail after 2R"
+        if t.trend
+            if not t.hit2R
+                strategy.exit(t.id + " 2R", from_entry = t.id, qty_percent = 50, limit = t.entry + t.dir * 2 * t.risk, stop = t.stop, comment_profit = "2R 50%", comment_loss = t.hit1R ? "BE" : "SL")
+            strategy.exit(t.id + " run", from_entry = t.id, stop = t.stop, limit = trailing ? na : t.tp, comment_profit = "TP", comment_loss = t.hit2R ? "Trail" : t.hit1R ? "BE" : "SL")
+        else
+            strategy.exit(t.id + " all", from_entry = t.id, stop = t.stop, limit = t.tp, comment_profit = "TP", comment_loss = t.hit1R ? "BE" : "SL")
+

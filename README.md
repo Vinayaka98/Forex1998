@@ -29,6 +29,18 @@ News blackout only works on the 15m stack; on 4H/D check the calendar yourself.
 2. Use a **15m, 4H or Daily** chart of EURUSD, GBPUSD, USDJPY or USDCAD. Alerts are prefixed `[15m]`, `[4H]` or `[D]`.
 3. Settings → *Position size*: set account size and account currency (default 120000 CAD, 0.25%).
 
+### Strategy version (for backtesting)
+`strategies/level_trader_strategy.pine` is the same code with real orders, so TradingView's **Strategy Tester**
+gives a full trade list (export via *List of trades → Export*), equity curve and drawdown.
+
+- Entries: market order at the signal candle's close, sized to *Risk per trade %* of *Account size*.
+- Exits mirror the trade model: stop moves to breakeven at 1R; trend trades close 50% at 2R and the runner trails
+  (or exits at the target in *Fixed target* mode); range trades exit all at the target.
+- Costs: `slippage = 5` ticks per fill (≈ 0.5 pip each way, ≈ 1 pip round trip). Change it under *Properties* to match your real spread + commission.
+- Keep *Properties → Initial capital* equal to the *Account size* input (both default 120000 CAD).
+- Strategy Tester results can differ slightly from the table's model row (intrabar fill order, slippage vs. fixed cost). Trust the Strategy Tester's trade list.
+- Rules live in the indicator; the strategy file is generated from it. Change the indicator first, then regenerate.
+
 ### Alerts (one-time setup, once per pair and timeframe)
 Pine scripts cannot create alerts themselves. On each pair's chart:
 *Create alert* → Condition: **Level Trader 15m-4H-D** → **Any alert() function call** → Trigger: *Once per bar close*.
