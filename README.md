@@ -7,11 +7,14 @@ with every kill switch applied, and fires an alert with
 **market BUY/SELL, entry, stop, target, BE / 2R levels and lot size**.
 It reads the chart's timeframe and runs the same checklist one level up or down:
 
-| Chart | Bias | Zones (swings, range) | Volume profiles | VWAP anchor | Entry window | Pip settings |
+| Chart | Bias | Zones (swings, range) | Volume profile | VWAP | Entry window | Pip settings |
 |---|---|---|---|---|---|---|
-| 15m | Daily HMA 200 | 4H | prev week + month | day | 9:30–12:00 NY | as entered |
-| 4H | Weekly HMA 200 | Daily | prev month + quarter | week | any 4H close | × 4 |
-| Daily | Weekly HMA 200 | Weekly | prev quarter + year | month | daily close | × 10 |
+| 15m | Daily HMA 200 | 4H | prev week + prev month; session POC as confluence | session, used | 9:30–12:00 NY | as entered |
+| 4H | 4H HMA 200 | 4H | prev week | not used | any 4H close | × 4 |
+| Daily | Daily HMA 200 | Daily | prev month | not used | daily close | × 10 |
+
+HMA 55 on the chart is the momentum flag on every stack. This matches the indicators on your charts;
+VRVP and Gaps are not used (VRVP depends on the visible screen, Gaps is not in the checklist).
 
 The 4H and Daily stacks are the **same rules scaled up, not a separately designed strategy**.
 Nothing in the PDF was written for them, so treat them as untested until the model results say otherwise.
@@ -54,5 +57,5 @@ Blocked setups are marked with a grey × — hover to see which kill switch stop
 - **VRVP** depends on what is on your screen; it is not reproducible in code and is replaced by the weekly/monthly profiles.
 - **News**: Pine cannot read forexfactory. Type the day's red-flag times into the input; they apply to every day on the chart.
 - **Profiles use tick volume** with fixed rows, so levels will differ by a few pips from TradingView's own PVP drawing.
-- **Model results** in the table follow the trade-management rules above, assuming the stop is hit first when a candle hits both. No spread or slippage. Flip *Runner exit* between trail and fixed target to compare them. Treat it as a sanity check, not a backtest.
+- **Model results** in the table follow the trade-management rules above, assuming the stop is hit first when a candle hits both. Every trade is charged *Spread + commission* (default 1.0 pip), and setups where that cost exceeds 20% of the stop are blocked. No slippage. Flip *Runner exit* between trail and fixed target to compare them. Treat it as a sanity check, not a backtest.
 - **Lot size** converts the quote currency to your account currency (`request.currency_rate`). The PDF calculator's example (EURUSD, 6 pips, 300 CAD → 5.00 lots) assumes $10/pip in CAD and over-sizes EURUSD/GBPUSD trades by the USD/CAD rate (~35–40%).

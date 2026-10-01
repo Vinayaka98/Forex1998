@@ -1,8 +1,8 @@
 //@version=6
 // Level Trader: the "NY session checklist v4" on three timeframes.
 //   15m chart: Daily bias  -> 4H zones     -> 15m trigger (9:30-12:00 NY only)
-//   4H chart : Weekly bias -> Daily zones  -> 4H trigger
-//   D chart  : Weekly bias -> Weekly zones -> Daily trigger
+//   4H chart : 4H HMA 200 bias, previous-week profile + 4H swings, 4H trigger
+//   D chart  : Daily HMA 200 bias, previous-month profile + Daily swings, Daily trigger
 // Use on EUR/USD, GBP/USD, USD/JPY or USD/CAD. Signals fire on candle close only (no repainting).
 indicator("Level Trader 15m-4H-D", shorttitle = "Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 500)
 
@@ -17,7 +17,7 @@ const string G_KILL  = "Kill switches"
 const string G_RISK  = "Position size"
 const string G_SHOW  = "Display & alerts"
 
-tfMode       = input.string("Auto (chart)", "Timeframe stack", options = ["Auto (chart)", "15m intraday", "4H swing", "Daily position"], group = G_STRAT, tooltip = "Auto picks the stack from the chart: under 1H = 15m intraday, 1H-12H = 4H swing, Daily or higher = Daily position.")
+tfMode       = input.string("Auto (chart)", "Timeframe stack", options = ["Auto (chart)", "15m intraday", "4H swing", "Daily position"], group = G_STRAT, tooltip = "Auto picks the stack from the chart: under 1H = 15m intraday, 1H-12H = 4H swing, Daily or higher = Daily position. 4H and Daily use only the chart's own HMA 200 / HMA 55, swings and one volume profile (week on 4H, month on Daily); no VWAP.")
 scale4h      = input.float(4.0, "Pip-setting multiplier on 4H", minval = 1, step = 0.5, group = G_STRAT, tooltip = "Every pip input below is written for the 15m chart and multiplied by this on the 4H stack (e.g. 3-pip tolerance -> 12 pips).")
 scaleD       = input.float(10.0, "Pip-setting multiplier on Daily", minval = 1, step = 0.5, group = G_STRAT)
 biasMode     = input.string("Auto", "Bias / mode", options = ["Auto", "Trend LONG", "Trend SHORT", "Range"], group = G_STRAT, tooltip = "Auto derives the bias from the higher timeframe (HMA 200 + direction of the last N candles). Set it manually to enforce the bias you wrote down in Step 1.")
@@ -41,8 +41,8 @@ rangeTpPct   = input.float(75, "Range target (% of way to opposite edge)", minva
 exitModel    = input.string("Trail after 2R", "Runner exit (trend trades)", options = ["Trail after 2R", "Fixed target"], group = G_STOP, tooltip = "Trail: after 50% is closed at 2R, the stop follows each new confirmed chart swing (+ buffer) and the target is ignored. Fixed: the runner exits at the target. Flip this and compare the Model results row.")
 trailLen     = input.int(2, "Trail: chart swing strength (bars each side)", minval = 1, maxval = 10, group = G_STOP)
 
-useMonthly   = input.bool(true, "Higher profile POC / VAH / VAL (prev month / quarter / year)", group = G_LVL)
-useWeekly    = input.bool(true, "Lower profile POC / VAH / VAL (prev week / month / quarter)", group = G_LVL)
+useMonthly   = input.bool(true, "Monthly POC / VAH / VAL (15m stack)", group = G_LVL)
+useWeekly    = input.bool(true, "Profile POC / VAH / VAL (prev week; prev month on Daily)", group = G_LVL)
 useSwings    = input.bool(true, "Zone-timeframe swing highs / lows", group = G_LVL)
 useRound     = input.bool(false, "Round numbers (00 / 50)", group = G_LVL)
 vaPct        = input.float(70, "Value area %", minval = 50, maxval = 95, group = G_LVL)
@@ -69,6 +69,8 @@ newsBuf      = input.int(15, "News blackout ± minutes", minval = 0, group = G_K
 accountSize  = input.float(120000, "Account size", minval = 1, group = G_RISK)
 accountCcy   = input.string("CAD", "Account currency", group = G_RISK)
 riskPct      = input.float(0.25, "Risk per trade %", minval = 0.01, step = 0.05, group = G_RISK)
+spreadPips   = input.float(1.0, "Spread + commission per trade (pips)", minval = 0, step = 0.1, group = G_RISK, tooltip = "Your real round-trip cost. Charged to every modelled trade and used by the spread kill switch. Commission of $X per lot round trip ≈ X/10 pips on USD-quoted pairs.")
+maxSpreadPct = input.float(20, "Kill: cost above % of stop", minval = 1, maxval = 100, group = G_RISK)
 
 showLevels   = input.bool(true, "Draw levels", group = G_SHOW)
 showBlocked  = input.bool(true, "Mark blocked setups (hover for reason)", group = G_SHOW)
@@ -92,13 +94,16 @@ float pip     = syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.price
 // ─────────────────────────────────────────────────────────────────────────────
 string stack = tfMode == "15m intraday" ? "15m" : tfMode == "4H swing" ? "4H" : tfMode == "Daily position" ? "D" : timeframe.in_seconds() < 3600 ? "15m" : timeframe.in_seconds() < 86400 ? "4H" : "D"
 bool   is15   = stack == "15m"
-string biasTF = is15 ? "D" : "W"
-string zoneTF = is15 ? "240" : stack == "4H" ? "D" : "W"
-string zoneNm = is15 ? "4H" : stack == "4H" ? "D" : "W"
-string loTF   = is15 ? "W" : stack == "4H" ? "M" : "3M"
-string hiTF   = is15 ? "M" : stack == "4H" ? "3M" : "12M"
-string loPfx  = is15 ? "w" : stack == "4H" ? "m" : "q"
-string hiPfx  = is15 ? "m" : stack == "4H" ? "q" : "y"
+// 15m: Daily bias, 4H zones, week + month profiles, session VWAP / SVP (the PDF).
+// 4H / D: everything from the chart itself, one profile (week / month), no VWAP.
+string biasTF = is15 ? "D" : timeframe.period
+string zoneTF = is15 ? "240" : timeframe.period
+string zoneNm = is15 ? "4H" : stack == "4H" ? "4H" : "D"
+string biasNm = is15 ? "Daily" : zoneNm
+string loTF   = is15 ? "W" : stack == "4H" ? "W" : "M"
+string hiTF   = "M"
+string loPfx  = is15 ? "w" : stack == "4H" ? "w" : "m"
+string hiPfx  = "m"
 string anchTF = is15 ? "D" : stack == "4H" ? "W" : "M"
 string tfTag  = "[" + stack + "] "
 float  sc     = is15 ? 1.0 : stack == "4H" ? scale4h : scaleD
@@ -288,6 +293,12 @@ sesH.push(high)
 sesL.push(low)
 sesV.push(vol)
 
+// Session volume profile POC (SVP) as confluence on the 15m stack: a magnet, not an entry level
+float devPoc = na
+if is15
+    [dp1, dp2, dp3] = f_profile(sesH, sesL, sesV)
+    devPoc := dp1
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 15m context (Step 3)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -372,14 +383,14 @@ f_add(array<float> lp, array<string> ln, float v, string name) =>
         ln.push(name)
 
 f_score(float L, array<float> lp) =>
-    int cnt = 0
+    int cnt = not na(devPoc) and math.abs(devPoc - L) <= clusterEf * pip ? 1 : 0
     for v in lp
         if math.abs(v - L) <= clusterEf * pip
             cnt += 1
     cnt
 
 f_names(float L, array<float> lp, array<string> ln) =>
-    string out = ""
+    string out = not na(devPoc) and math.abs(devPoc - L) <= clusterEf * pip ? "sPOC" : ""
     int n = lp.size()
     if n > 0
         for i = 0 to n - 1
@@ -522,7 +533,9 @@ f_eval(int dir, bool enabled, array<float> lp, array<string> ln) =>
                 why := "Range too narrow"
             if why == "" and isRange and retest > maxRetest
                 why := "Retest #" + str.tostring(retest) + " of range edge"
-            if why == "" and not (isRange ? vAgree >= 0 : vAgree == 1) and score < 2
+            if why == "" and sd > 0 and spreadPips * pip / sd * 100 > maxSpreadPct
+                why := "Cost " + str.tostring(spreadPips, "#.0") + " pips = " + str.tostring(spreadPips * pip / sd * 100, "#") + "% of stop"
+            if why == "" and is15 and not (isRange ? vAgree >= 0 : vAgree == 1) and score < 2
                 why := "VWAP " + (vAgree == -1 ? "against" : "flat") + " and level has no confluence"
             if why == "" and trades.size() > 0
                 bool riskFree = true
@@ -599,6 +612,7 @@ if nT > 0
                         t.stop := cand
                         msg    := (msg == "" ? "" : msg + "; ") + "trail stop to " + f_px(cand)
             if not na(exitR)
+                exitR   -= spreadPips * pip / t.risk
                 nTrades += 1
                 if exitR > 0.01
                     nWin += 1
@@ -619,7 +633,7 @@ if alertMgmt and mgmtMsg != ""
 // ─────────────────────────────────────────────────────────────────────────────
 array<float>  lvlP = array.new<float>()
 array<string> lvlN = array.new<string>()
-if useMonthly
+if useMonthly and is15
     f_add(lvlP, lvlN, mPoc, hiPfx + "POC")
     f_add(lvlP, lvlN, mVah, hiPfx + "VAH")
     f_add(lvlP, lvlN, mVal, hiPfx + "VAL")
@@ -662,7 +676,7 @@ if sigDir != 0
     float  be      = close + sigDir * sigRisk
     float  twoR    = close + sigDir * 2 * sigRisk
     string msg = tfTag + syminfo.ticker + " · MARKET " + side + " @ " + f_px(close) +
-         "\nSL " + f_px(sigSL) + " (" + f_pips(sigRisk) + " pips)" +
+         "\nSL " + f_px(sigSL) + " (" + f_pips(sigRisk) + " pips; cost " + str.tostring(spreadPips * pip / sigRisk * 100, "#") + "% of stop)" +
          "\nTP " + f_px(sigTP) + " (" + f_pips(math.abs(sigTP - close)) + " pips · " + str.tostring(sigRR, "#.0") + "R)" +
          "\n1R → stop to BE: " + f_px(be) +
          "\n2R → " + (isRange ? "consider closing all" : "close 50%") + ": " + f_px(twoR) +
@@ -717,7 +731,7 @@ alertcondition(sigDir == -1, "Market SELL", "{{ticker}} MARKET SELL @ {{close}} 
 // ─────────────────────────────────────────────────────────────────────────────
 plotshape(sigDir == 1, "Buy", shape.triangleup, location.belowbar, color.teal, size = size.small)
 plotshape(sigDir == -1, "Sell", shape.triangledown, location.abovebar, color.red, size = size.small)
-plot(vw, "VWAP", color.new(color.orange, 0))
+plot(is15 ? vw : na, "VWAP", color.new(color.orange, 0))
 plot(hFast, "HMA 55", hState == 1 ? color.teal : hState == -1 ? color.maroon : color.gray, 2)
 plot(showDailyHma ? dHma : na, "Daily HMA 200", color.purple, style = plot.style_stepline)
 bgcolor(inWin ? color.new(color.blue, 94) : na, title = "Entry window")
@@ -745,8 +759,8 @@ if barstate.islast and showLevels
     if isRange
         f_drawLevel(rHigh, "Range high", color.silver, line.style_dashed)
         f_drawLevel(rLow, "Range low", color.silver, line.style_dashed)
-    [sp, sva, svl] = f_profile(sesH, sesL, sesV)
-    f_drawLevel(sp, "Developing POC", color.yellow, line.style_dotted)
+    if is15
+        f_drawLevel(devPoc, "Session POC", color.yellow, line.style_dotted)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status table
@@ -771,15 +785,15 @@ if barstate.islast and showTable
         trd := str.tostring(trades.size()) + " open · last " + (lt.dir == 1 ? "BUY" : "SELL") + " @ " + f_px(lt.entry) + " · SL " + f_px(lt.stop) + " · TP " + f_px(lt.tp)
     string res  = nTrades == 0 ? "no trades yet" : str.tostring(nTrades) + " trades · " + str.tostring(100.0 * nWin / nTrades, "#") + "% win · avg " + str.tostring(sumR / nTrades, "#.##") + "R · total " + str.tostring(sumR, "#.#") + "R"
     bool tfOk = stack == "15m" ? timeframe.period == "15" : stack == "4H" ? timeframe.period == "240" : timeframe.period == "D"
-    f_row(0, "Stack", stack + " · bias " + biasTF + " · zones " + zoneNm + (tfOk ? " ✓" : " · chart TF mismatch!"), tfOk ? ok : bad)
+    f_row(0, "Stack", stack + " · bias " + biasNm + " · zones " + zoneNm + (tfOk ? " ✓" : " · chart TF mismatch!"), tfOk ? ok : bad)
     f_row(1, "Mode", modeTxt, isRange ? warn : ok)
-    f_row(2, biasTF + " vs HMA " + str.tostring(hmaSlowLen), na(dHma) ? "n/a" : dClose > dHma ? "above" : "below", color.white)
+    f_row(2, biasNm + " vs HMA " + str.tostring(hmaSlowLen), na(dHma) ? "n/a" : dClose > dHma ? "above" : "below", color.white)
     f_row(3, "Chart ATR", str.tostring(atrPips, "#.0") + " pips", atrPips >= minAtrEff ? ok : bad)
-    f_row(4, "VWAP", vTxt, vCol)
+    f_row(4, "VWAP", is15 ? vTxt : "not used on " + stack, is15 ? vCol : color.gray)
     f_row(5, "HMA " + str.tostring(hmaFastLen), hTxt, hCol)
     f_row(6, "Window", not is15 ? "n/a (any close)" : inWin ? "OPEN" : "closed", inWin ? ok : color.gray)
     f_row(7, "News", not is15 ? "check calendar yourself" : newsBlock ? "BLACKOUT" : newsMin.size() == 0 ? "none entered" : "clear", newsBlock ? bad : newsMin.size() == 0 ? warn : ok)
     f_row(8, "Chop", chop ? "YES · wait" : "no", chop ? bad : ok)
     f_row(9, "Open trades", trd, trades.size() == 0 ? color.gray : color.white)
     f_row(10, "Model (" + (exitModel == "Fixed target" ? "fixed" : "trail") + ")", res, sumR >= 0 ? ok : bad)
-    f_row(11, biasTF + " ATR", str.tostring(dAtr / pip, "#") + " pips", color.white)
+    f_row(11, biasNm + " ATR", str.tostring(dAtr / pip, "#") + " pips", color.white)
