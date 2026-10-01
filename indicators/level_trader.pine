@@ -4,7 +4,7 @@
 //   4H chart : 4H HMA 200 bias, previous-week profile + 4H swings, 4H trigger
 //   D chart  : Daily HMA 200 bias, previous-month profile + Daily swings, Daily trigger
 // Use on EUR/USD, GBP/USD, USD/JPY or USD/CAD. Signals fire on candle close only (no repainting).
-indicator("Level Trader 15m-4H-D", shorttitle = "Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 500)
+indicator("Level Trader 15m-4H-D", shorttitle = "Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 60, max_bars_back = 500)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs
@@ -45,6 +45,9 @@ useMonthly   = input.bool(true, "Monthly POC / VAH / VAL (15m stack)", group = G
 useWeekly    = input.bool(true, "Profile POC / VAH / VAL (prev week; prev month on Daily)", group = G_LVL)
 useSwings    = input.bool(true, "Zone-timeframe swing highs / lows", group = G_LVL)
 useRound     = input.bool(false, "Round numbers (00 / 50)", group = G_LVL)
+useGaps      = input.bool(true, "Unfilled gaps: confluence + target magnets", group = G_LVL, tooltip = "Price gaps (candle low above previous high, or high below previous low) on the chart timeframe. Never an entry level on their own: a gap edge near a level adds confluence, and a gap between entry and target is noted in the alert.")
+minGapPips   = input.float(1.0, "Min gap size (pips, 15m)", minval = 0.1, step = 0.1, group = G_LVL)
+maxGaps      = input.int(20, "Max gaps tracked", minval = 1, maxval = 50, group = G_LVL)
 vaPct        = input.float(70, "Value area %", minval = 50, maxval = 95, group = G_LVL)
 pBins        = input.int(80, "Profile rows", minval = 20, maxval = 300, group = G_LVL)
 swingLen     = input.int(5, "Zone swing strength (bars each side)", minval = 2, group = G_LVL)
@@ -299,6 +302,61 @@ if is15
     [dp1, dp2, dp3] = f_profile(sesH, sesL, sesV)
     devPoc := dp1
 
+// Unfilled gaps on the chart timeframe. Partial fills shrink the gap; a full fill removes it.
+var array<float> gTop = array.new<float>()
+var array<float> gBot = array.new<float>()
+var array<int>   gBar = array.new<int>()
+if useGaps
+    int gn = gTop.size()
+    if gn > 0
+        for i = gn - 1 to 0
+            float gt = gTop.get(i)
+            float gb = gBot.get(i)
+            if low <= gb and high >= gt
+                gTop.remove(i)
+                gBot.remove(i)
+                gBar.remove(i)
+            else if high > gb and high < gt and low <= gb
+                gBot.set(i, high)
+            else if low < gt and low > gb and high >= gt
+                gTop.set(i, low)
+    float minGap = minGapPips * sc * pip
+    if low - high[1] >= minGap
+        gTop.push(low)
+        gBot.push(high[1])
+        gBar.push(bar_index)
+    else if low[1] - high >= minGap
+        gTop.push(low[1])
+        gBot.push(high)
+        gBar.push(bar_index)
+    while gTop.size() > maxGaps
+        gTop.shift()
+        gBot.shift()
+        gBar.shift()
+
+// True when an unfilled gap edge sits within the confluence radius of price L
+f_gapNear(float L) =>
+    bool near = false
+    int gn = gTop.size()
+    if gn > 0
+        for i = 0 to gn - 1
+            if math.abs(gTop.get(i) - L) <= clusterEf * pip or math.abs(gBot.get(i) - L) <= clusterEf * pip
+                near := true
+    near
+
+// Unfilled gaps lying between entry and target (magnets along the path)
+f_gapPath(int dir, float entry, float tp) =>
+    string out = ""
+    int gn = gTop.size()
+    if gn > 0 and not na(tp)
+        for i = 0 to gn - 1
+            float gt = gTop.get(i)
+            float gb = gBot.get(i)
+            bool between = dir == 1 ? gb > entry and gb < tp : gt < entry and gt > tp
+            if between
+                out := (out == "" ? "" : out + ", ") + f_px(gb) + "-" + f_px(gt)
+    out
+
 // ─────────────────────────────────────────────────────────────────────────────
 // 15m context (Step 3)
 // ─────────────────────────────────────────────────────────────────────────────
@@ -383,7 +441,7 @@ f_add(array<float> lp, array<string> ln, float v, string name) =>
         ln.push(name)
 
 f_score(float L, array<float> lp) =>
-    int cnt = not na(devPoc) and math.abs(devPoc - L) <= clusterEf * pip ? 1 : 0
+    int cnt = (not na(devPoc) and math.abs(devPoc - L) <= clusterEf * pip ? 1 : 0) + (f_gapNear(L) ? 1 : 0)
     for v in lp
         if math.abs(v - L) <= clusterEf * pip
             cnt += 1
@@ -391,6 +449,8 @@ f_score(float L, array<float> lp) =>
 
 f_names(float L, array<float> lp, array<string> ln) =>
     string out = not na(devPoc) and math.abs(devPoc - L) <= clusterEf * pip ? "sPOC" : ""
+    if f_gapNear(L)
+        out := out == "" ? "Gap edge" : out + " + Gap edge"
     int n = lp.size()
     if n > 0
         for i = 0 to n - 1
@@ -674,6 +734,8 @@ if sigDir != 0
     string side    = sigDir == 1 ? "BUY" : "SELL"
     string lotsTxt = na(sigLots) ? "n/a (check account currency)" : str.tostring(sigLots, "#.00")
     float  be      = close + sigDir * sigRisk
+    string gapPath = f_gapPath(sigDir, close, sigTP)
+    bool   gapAtTp = f_gapNear(sigTP)
     float  twoR    = close + sigDir * 2 * sigRisk
     string msg = tfTag + syminfo.ticker + " · MARKET " + side + " @ " + f_px(close) +
          "\nSL " + f_px(sigSL) + " (" + f_pips(sigRisk) + " pips; cost " + str.tostring(spreadPips * pip / sigRisk * 100, "#") + "% of stop)" +
@@ -682,6 +744,7 @@ if sigDir != 0
          "\n2R → " + (isRange ? "consider closing all" : "close 50%") + ": " + f_px(twoR) +
          "\nSize " + lotsTxt + " lots (" + str.tostring(riskPct) + "% = " + str.tostring(riskAmt, "#") + " " + accountCcy + ")" +
          "\n" + (isRange ? "RANGE" : "TREND") + " · " + sigPat + " @ " + sigNames +
+         (gapAtTp ? "\nTarget lines up with an unfilled gap (stronger target)" : gapPath != "" ? "\nUnfilled gap on the way to target: " + gapPath : "") +
          (caution ? "\n⚠ HMA 55 not with you: consider exiting at 1.5R" : "")
     alert(msg, alert.freq_once_per_bar_close)
 
@@ -738,6 +801,7 @@ bgcolor(inWin ? color.new(color.blue, 94) : na, title = "Entry window")
 
 var array<line>  lvLines = array.new<line>()
 var array<label> lvLabs  = array.new<label>()
+var array<box>   gapBoxes = array.new<box>()
 f_drawLevel(float p, string txt, color col, string sty) =>
     if not na(p)
         lvLines.push(line.new(bar_index - 60, p, bar_index + 10, p, color = col, style = sty, extend = extend.none))
@@ -761,6 +825,12 @@ if barstate.islast and showLevels
         f_drawLevel(rLow, "Range low", color.silver, line.style_dashed)
     if is15
         f_drawLevel(devPoc, "Session POC", color.yellow, line.style_dotted)
+    for b in gapBoxes
+        b.delete()
+    gapBoxes.clear()
+    if useGaps and gTop.size() > 0
+        for i = 0 to gTop.size() - 1
+            gapBoxes.push(box.new(gBar.get(i), gTop.get(i), bar_index + 10, gBot.get(i), border_color = color.new(color.fuchsia, 40), bgcolor = color.new(color.fuchsia, 88)))
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status table

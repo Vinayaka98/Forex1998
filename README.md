@@ -14,7 +14,9 @@ It reads the chart's timeframe and runs the same checklist one level up or down:
 | Daily | Daily HMA 200 | Daily | prev month | not used | daily close | × 10 |
 
 HMA 55 on the chart is the momentum flag on every stack. This matches the indicators on your charts;
-VRVP and Gaps are not used (VRVP depends on the visible screen, Gaps is not in the checklist).
+VRVP is not used (it depends on the visible screen).
+
+**Gaps** (candle low above the previous high or high below the previous low, ≥ 1 pip × stack multiplier) are tracked until filled; partial fills shrink them. They are never an entry level. A gap edge within the confluence radius of a level adds +1 confluence; a gap between entry and target, or at the target, is noted in the alert. Drawn as pink boxes. Real gaps in FX are rare outside the Sunday open and news spikes.
 
 The 4H and Daily stacks are the **same rules scaled up, not a separately designed strategy**.
 Nothing in the PDF was written for them, so treat them as untested until the model results say otherwise.
