@@ -29,7 +29,7 @@ That single alert carries entry signals, 1R/2R/stop/target management messages, 
 | ATR ≥ 4 pips | 15m ATR(14) in pips. |
 | HMA 55 | Not a filter; flagged as "consider 1.5R exit" when not with you. |
 | Patterns | WICK (≥50% wick past level, body on your side), ENGULF, 2xTAP (two touches, pulled away in between, never closed through), B&R (trend only). Candle close only. |
-| Stop | Beyond rejection wick (trend) or range edge (range) + 2.5 pips. Must be 0.5–1.5× ATR; tighter stops are widened to 0.5× ATR by default. |
+| Stop | Beyond rejection wick (trend) or range edge (range) + 2.5 pips. Must be 0.5–1.5× ATR; outside that the trade is skipped (wick dictates, ATR validates). "Widen to min" is available in settings for testing. |
 | Target | Trend: next level beyond entry (outside the entry level's cluster). Range: 75% toward opposite edge. Must be ≥ 2R. |
 | Kill switches | Shorting into support / buying into resistance (room < 2R), chasing (3-bar move > 2.5× ATR), oversized candle (> 2× ATR), missed (>15 pips from level), ATR < 4, no man's land (no target level), range middle/narrow (< 3× ATR or < 3× stop), 3rd+ retest of a range edge, outside 9:30–12:00 ET, news blackout, chop (≥4 colour flips in 6 candles). |
 | One trade at a time | No new signal while the modelled trade is open. |

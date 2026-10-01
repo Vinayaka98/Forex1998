@@ -30,7 +30,7 @@ bufPips      = input.float(2.5, "Buffer beyond wick / edge (pips)", minval = 0, 
 stopAtrMult  = input.float(1.0, "Stop = ATR × (ATR mode)", minval = 0.1, step = 0.1, group = G_STOP)
 stopMinAtr   = input.float(0.5, "Min stop (× ATR)", minval = 0, step = 0.1, group = G_STOP)
 stopMaxAtr   = input.float(1.5, "Max stop (× ATR)", minval = 0.1, step = 0.1, group = G_STOP)
-tightMode    = input.string("Widen to min", "Stop tighter than min", options = ["Widen to min", "Skip trade"], group = G_STOP)
+tightMode    = input.string("Skip trade", "Stop tighter than min", options = ["Widen to min", "Skip trade"], group = G_STOP)
 rangeTpPct   = input.float(75, "Range target (% of way to opposite edge)", minval = 10, maxval = 100, group = G_STOP)
 
 useMonthly   = input.bool(true, "Monthly POC / VAH / VAL (previous month)", group = G_LVL)
