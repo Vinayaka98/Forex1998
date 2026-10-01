@@ -220,9 +220,9 @@ var array<float> wV = array.new<float>()
 var array<float> mH = array.new<float>()
 var array<float> mL = array.new<float>()
 var array<float> mV = array.new<float>()
-var array<float> sH = array.new<float>()
-var array<float> sL = array.new<float>()
-var array<float> sV = array.new<float>()
+var array<float> sesH = array.new<float>()
+var array<float> sesL = array.new<float>()
+var array<float> sesV = array.new<float>()
 var float wPoc = na
 var float wVah = na
 var float wVal = na
@@ -248,18 +248,18 @@ if timeframe.change("M")
     mL.clear()
     mV.clear()
 if timeframe.change("D")
-    sH.clear()
-    sL.clear()
-    sV.clear()
+    sesH.clear()
+    sesL.clear()
+    sesV.clear()
 wH.push(high)
 wL.push(low)
 wV.push(vol)
 mH.push(high)
 mL.push(low)
 mV.push(vol)
-sH.push(high)
-sL.push(low)
-sV.push(vol)
+sesH.push(high)
+sesL.push(low)
+sesV.push(vol)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 15m context (Step 3)
@@ -718,7 +718,7 @@ if barstate.islast and showLevels
     if isRange
         f_drawLevel(rHigh, "Range high", color.silver, line.style_dashed)
         f_drawLevel(rLow, "Range low", color.silver, line.style_dashed)
-    [sp, sva, svl] = f_profile(sH, sL, sV)
+    [sp, sva, svl] = f_profile(sesH, sesL, sesV)
     f_drawLevel(sp, "Session POC", color.yellow, line.style_dotted)
 
 // ─────────────────────────────────────────────────────────────────────────────
