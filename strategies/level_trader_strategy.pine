@@ -10,7 +10,8 @@
 // Use on EUR/USD, GBP/USD, USD/JPY or USD/CAD. Signals fire on candle close only (no repainting).
 strategy("Level Trader Strategy", shorttitle = "Levels Strat", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 60, max_bars_back = 500,
      initial_capital = 120000, currency = currency.CAD, default_qty_type = strategy.fixed, pyramiding = 10,
-     process_orders_on_close = true, slippage = 5, commission_type = strategy.commission.percent, commission_value = 0)
+     process_orders_on_close = true, slippage = 5, commission_type = strategy.commission.percent, commission_value = 0,
+     margin_long = 1, margin_short = 1)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs

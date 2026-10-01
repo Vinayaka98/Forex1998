@@ -37,6 +37,7 @@ gives a full trade list (export via *List of trades → Export*), equity curve a
 - Exits mirror the trade model: stop moves to breakeven at 1R; trend trades close 50% at 2R and the runner trails
   (or exits at the target in *Fixed target* mode); range trades exit all at the target.
 - Costs: `slippage = 5` ticks per fill (≈ 0.5 pip each way, ≈ 1 pip round trip). Change it under *Properties* to match your real spread + commission.
+- Margin is set to 1% (100:1 leverage, like a typical FX prop account). With the Pine default of 100% every forex order is rejected for lack of cash and the report stays empty.
 - Keep *Properties → Initial capital* equal to the *Account size* input (both default 120000 CAD).
 - Strategy Tester results can differ slightly from the table's model row (intrabar fill order, slippage vs. fixed cost). Trust the Strategy Tester's trade list.
 - Rules live in the indicator; the strategy file is generated from it. Change the indicator first, then regenerate.
