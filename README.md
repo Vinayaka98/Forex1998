@@ -1,22 +1,34 @@
 # Forex1998
 
-## NY Session Level Trader (TradingView, Pine Script v6)
+## Level Trader 15m / 4H / D (TradingView, Pine Script v6)
 
-`indicators/ny_session_level_trader.pine` automates the *NY session checklist v4*:
-Daily bias → 4H zones → 15m confirmation, with every kill switch applied, and
-fires an alert with **market BUY/SELL, entry, stop, target, BE / 2R levels and lot size**.
+`indicators/level_trader.pine` automates the *NY session checklist v4*
+with every kill switch applied, and fires an alert with
+**market BUY/SELL, entry, stop, target, BE / 2R levels and lot size**.
+It reads the chart's timeframe and runs the same checklist one level up or down:
+
+| Chart | Bias | Zones (swings, range) | Volume profiles | VWAP anchor | Entry window | Pip settings |
+|---|---|---|---|---|---|---|
+| 15m | Daily HMA 200 | 4H | prev week + month | day | 9:30–12:00 NY | as entered |
+| 4H | Weekly HMA 200 | Daily | prev month + quarter | week | any 4H close | × 4 |
+| Daily | Weekly HMA 200 | Weekly | prev quarter + year | month | daily close | × 10 |
+
+The 4H and Daily stacks are the **same rules scaled up, not a separately designed strategy**.
+Nothing in the PDF was written for them, so treat them as untested until the model results say otherwise.
+News blackout only works on the 15m stack; on 4H/D check the calendar yourself.
+4H and Daily trades are held overnight and often over weekends — check that your prop-firm account type allows it.
 
 ### Install
 1. TradingView → Pine Editor → paste the file → *Add to chart*.
-2. Use a **15m** chart of EURUSD, GBPUSD, USDJPY or USDCAD.
+2. Use a **15m, 4H or Daily** chart of EURUSD, GBPUSD, USDJPY or USDCAD. Alerts are prefixed `[15m]`, `[4H]` or `[D]`.
 3. Settings → *Position size*: set account size and account currency (default 120000 CAD, 0.25%).
 
-### Alerts (one-time setup, once per pair)
+### Alerts (one-time setup, once per pair and timeframe)
 Pine scripts cannot create alerts themselves. On each pair's chart:
 *Create alert* → Condition: **NY Session Level Trader** → **Any alert() function call** → Trigger: *Once per bar close*.
 That single alert carries entry signals, 1R/2R/stop/target management messages, and (optional) level-reached heads-ups.
 
-### How the checklist is translated into rules
+### How the checklist is translated into rules (15m stack; higher stacks swap timeframes per the table above)
 
 | Checklist item | What the code does |
 |---|---|

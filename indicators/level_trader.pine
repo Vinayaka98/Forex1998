@@ -1,9 +1,10 @@
 //@version=6
-// NY Session Level Trader
-// Automates the "NY session checklist v4": Daily bias -> 4H zones -> 15m trigger.
-// Use on a 15m chart of EUR/USD, GBP/USD, USD/JPY or USD/CAD.
-// Signals fire only on candle close (no repainting) inside the 9:30-12:00 NY window.
-indicator("NY Session Level Trader", shorttitle = "NY Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 500)
+// Level Trader: the "NY session checklist v4" on three timeframes.
+//   15m chart: Daily bias  -> 4H zones     -> 15m trigger (9:30-12:00 NY only)
+//   4H chart : Weekly bias -> Daily zones  -> 4H trigger
+//   D chart  : Weekly bias -> Weekly zones -> Daily trigger
+// Use on EUR/USD, GBP/USD, USD/JPY or USD/CAD. Signals fire on candle close only (no repainting).
+indicator("Level Trader 15m-4H-D", shorttitle = "Levels", overlay = true, max_lines_count = 500, max_labels_count = 500, max_bars_back = 500)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs
@@ -16,14 +17,17 @@ const string G_KILL  = "Kill switches"
 const string G_RISK  = "Position size"
 const string G_SHOW  = "Display & alerts"
 
-biasMode     = input.string("Auto", "Bias / mode", options = ["Auto", "Trend LONG", "Trend SHORT", "Range"], group = G_STRAT, tooltip = "Auto derives the bias from the Daily chart (HMA 200 + direction of the last N candles). Set it manually to enforce the bias you wrote down in Step 1.")
-sessWin      = input.session("0930-1200", "Entry window (New York time)", group = G_STRAT)
+tfMode       = input.string("Auto (chart)", "Timeframe stack", options = ["Auto (chart)", "15m intraday", "4H swing", "Daily position"], group = G_STRAT, tooltip = "Auto picks the stack from the chart: under 1H = 15m intraday, 1H-12H = 4H swing, Daily or higher = Daily position.")
+scale4h      = input.float(4.0, "Pip-setting multiplier on 4H", minval = 1, step = 0.5, group = G_STRAT, tooltip = "Every pip input below is written for the 15m chart and multiplied by this on the 4H stack (e.g. 3-pip tolerance -> 12 pips).")
+scaleD       = input.float(10.0, "Pip-setting multiplier on Daily", minval = 1, step = 0.5, group = G_STRAT)
+biasMode     = input.string("Auto", "Bias / mode", options = ["Auto", "Trend LONG", "Trend SHORT", "Range"], group = G_STRAT, tooltip = "Auto derives the bias from the higher timeframe (HMA 200 + direction of the last N candles). Set it manually to enforce the bias you wrote down in Step 1.")
+sessWin      = input.session("0930-1200", "Entry window (New York time, 15m stack only)", group = G_STRAT)
 minRR        = input.float(2.0, "Min reward : risk", minval = 0.5, step = 0.1, group = G_STRAT)
-hmaSlowLen   = input.int(200, "Daily HMA length", minval = 10, group = G_STRAT)
-hmaFastLen   = input.int(55, "15m HMA length", minval = 5, group = G_STRAT)
-dLookback    = input.int(15, "Daily candles for direction", minval = 5, group = G_STRAT)
-dHoldDays    = input.int(10, "Trend = last N daily closes on one side of HMA", minval = 3, group = G_STRAT)
-rangeLen     = input.int(30, "Range lookback (4H bars)", minval = 6, group = G_STRAT)
+hmaSlowLen   = input.int(200, "Bias-timeframe HMA length", minval = 10, group = G_STRAT)
+hmaFastLen   = input.int(55, "Chart HMA length (momentum)", minval = 5, group = G_STRAT)
+dLookback    = input.int(15, "Bias candles for direction", minval = 5, group = G_STRAT)
+dHoldDays    = input.int(10, "Trend = last N bias closes on one side of HMA", minval = 3, group = G_STRAT)
+rangeLen     = input.int(30, "Range lookback (zone-timeframe bars)", minval = 6, group = G_STRAT)
 addMode      = input.string("After 2R partial", "New trade while one is open", options = ["After 2R partial", "After breakeven (1R)", "Never"], group = G_STRAT, tooltip = "Checklist 'adding back after partials': every open trade must be risk-free (stop at breakeven or better) and the new setup must be at a different level. 'After breakeven' relaxes 'after partials' to 1R.")
 maxOpen      = input.int(3, "Max open trades", minval = 1, maxval = 10, group = G_STRAT)
 
@@ -34,23 +38,23 @@ stopMinAtr   = input.float(0.5, "Min stop (× ATR)", minval = 0, step = 0.1, gro
 stopMaxAtr   = input.float(1.5, "Max stop (× ATR)", minval = 0.1, step = 0.1, group = G_STOP)
 tightMode    = input.string("Skip trade", "Stop tighter than min", options = ["Widen to min", "Skip trade"], group = G_STOP)
 rangeTpPct   = input.float(75, "Range target (% of way to opposite edge)", minval = 10, maxval = 100, group = G_STOP)
-exitModel    = input.string("Trail after 2R", "Runner exit (trend trades)", options = ["Trail after 2R", "Fixed target"], group = G_STOP, tooltip = "Trail: after 50% is closed at 2R, the stop follows each new confirmed 15m swing (+ buffer) and the target is ignored. Fixed: the runner exits at the target. Flip this and compare the Model results row.")
-trailLen     = input.int(2, "Trail: 15m swing strength (bars each side)", minval = 1, maxval = 10, group = G_STOP)
+exitModel    = input.string("Trail after 2R", "Runner exit (trend trades)", options = ["Trail after 2R", "Fixed target"], group = G_STOP, tooltip = "Trail: after 50% is closed at 2R, the stop follows each new confirmed chart swing (+ buffer) and the target is ignored. Fixed: the runner exits at the target. Flip this and compare the Model results row.")
+trailLen     = input.int(2, "Trail: chart swing strength (bars each side)", minval = 1, maxval = 10, group = G_STOP)
 
-useMonthly   = input.bool(true, "Monthly POC / VAH / VAL (previous month)", group = G_LVL)
-useWeekly    = input.bool(true, "Weekly POC / VAH / VAL (previous week)", group = G_LVL)
-useSwings    = input.bool(true, "4H swing highs / lows", group = G_LVL)
+useMonthly   = input.bool(true, "Higher profile POC / VAH / VAL (prev month / quarter / year)", group = G_LVL)
+useWeekly    = input.bool(true, "Lower profile POC / VAH / VAL (prev week / month / quarter)", group = G_LVL)
+useSwings    = input.bool(true, "Zone-timeframe swing highs / lows", group = G_LVL)
 useRound     = input.bool(false, "Round numbers (00 / 50)", group = G_LVL)
 vaPct        = input.float(70, "Value area %", minval = 50, maxval = 95, group = G_LVL)
 pBins        = input.int(80, "Profile rows", minval = 20, maxval = 300, group = G_LVL)
-swingLen     = input.int(5, "4H swing strength (bars each side)", minval = 2, group = G_LVL)
+swingLen     = input.int(5, "Zone swing strength (bars each side)", minval = 2, group = G_LVL)
 swingMinPips = input.float(30, "Min reversal from swing (pips)", minval = 0, group = G_LVL)
-swingDays    = input.int(21, "Swing lookback (days)", minval = 3, group = G_LVL)
+swingDays    = input.int(21, "Swing lookback (days, 15m stack)", minval = 3, group = G_LVL)
 maxSwings    = input.int(3, "Max swings per side", minval = 1, maxval = 10, group = G_LVL)
 tolPips      = input.float(3.0, "Touch tolerance (pips)", minval = 0, step = 0.5, group = G_LVL)
 clusterPips  = input.float(8.0, "Confluence radius (pips)", minval = 0, step = 0.5, group = G_LVL)
 
-minAtrPips   = input.float(4.0, "Min 15m ATR (pips)", minval = 0, step = 0.5, group = G_KILL)
+minAtrPips   = input.float(4.0, "Min chart ATR (pips)", minval = 0, step = 0.5, group = G_KILL)
 missPips     = input.float(15, "Missed it: max distance from level (pips)", minval = 1, group = G_KILL)
 maxCandleAtr = input.float(2.0, "Oversized candle (× ATR)", minval = 0.5, step = 0.1, group = G_KILL)
 chaseAtr     = input.float(2.5, "Chasing: 3-bar move (× ATR)", minval = 0.5, step = 0.1, group = G_KILL)
@@ -59,7 +63,7 @@ chopAlt      = input.int(4, "Chop: min colour flips", minval = 2, maxval = 19, g
 chopIndec    = input.int(2, "Chop: indecision candles that cost one flip", minval = 1, maxval = 20, group = G_KILL, tooltip = "Indecision candle = body under 35% of its range, or wicks of 25%+ on both sides. With this many of them, one fewer colour flip is enough to call chop.")
 maxRetest    = input.int(2, "Range: max retests of an edge", minval = 1, group = G_KILL)
 vwapFlatAtr  = input.float(0.25, "VWAP flat if 8-bar slope < ATR ×", minval = 0, step = 0.05, group = G_KILL)
-newsTimes    = input.string("", "Red-flag news today (NY time, e.g. 08:30,10:00)", group = G_KILL, tooltip = "Pine cannot read forexfactory. Type today's red-flag times here; no entries within ± the blackout. Note: the times apply to every day on the chart, including history.")
+newsTimes    = input.string("", "Red-flag news today (NY time, e.g. 08:30,10:00; 15m stack only)", group = G_KILL, tooltip = "Pine cannot read forexfactory. Type today's red-flag times here; no entries within ± the blackout. Note: the times apply to every day on the chart, including history.")
 newsBuf      = input.int(15, "News blackout ± minutes", minval = 0, group = G_KILL)
 
 accountSize  = input.float(120000, "Account size", minval = 1, group = G_RISK)
@@ -69,7 +73,7 @@ riskPct      = input.float(0.25, "Risk per trade %", minval = 0.01, step = 0.05,
 showLevels   = input.bool(true, "Draw levels", group = G_SHOW)
 showBlocked  = input.bool(true, "Mark blocked setups (hover for reason)", group = G_SHOW)
 showTable    = input.bool(true, "Status table", group = G_SHOW)
-showDailyHma = input.bool(false, "Plot Daily HMA 200", group = G_SHOW)
+showDailyHma = input.bool(false, "Plot bias-timeframe HMA", group = G_SHOW)
 alertMgmt    = input.bool(true, "Alerts: 1R / 2R / stop / target", group = G_SHOW)
 alertZone    = input.bool(false, "Alerts: price reached a level", group = G_SHOW)
 
@@ -82,7 +86,30 @@ const int   VWAP_BARS  = 8
 // Basics
 // ─────────────────────────────────────────────────────────────────────────────
 float pip     = syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1)
-float tol     = tolPips * pip
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Timeframe stack: which timeframes play the Daily / 4H / 15m roles
+// ─────────────────────────────────────────────────────────────────────────────
+string stack = tfMode == "15m intraday" ? "15m" : tfMode == "4H swing" ? "4H" : tfMode == "Daily position" ? "D" : timeframe.in_seconds() < 3600 ? "15m" : timeframe.in_seconds() < 86400 ? "4H" : "D"
+bool   is15   = stack == "15m"
+string biasTF = is15 ? "D" : "W"
+string zoneTF = is15 ? "240" : stack == "4H" ? "D" : "W"
+string zoneNm = is15 ? "4H" : stack == "4H" ? "D" : "W"
+string loTF   = is15 ? "W" : stack == "4H" ? "M" : "3M"
+string hiTF   = is15 ? "M" : stack == "4H" ? "3M" : "12M"
+string loPfx  = is15 ? "w" : stack == "4H" ? "m" : "q"
+string hiPfx  = is15 ? "m" : stack == "4H" ? "q" : "y"
+string anchTF = is15 ? "D" : stack == "4H" ? "W" : "M"
+string tfTag  = "[" + stack + "] "
+float  sc     = is15 ? 1.0 : stack == "4H" ? scale4h : scaleD
+
+float tol       = tolPips * sc * pip
+float bufEff    = bufPips * sc
+float clusterEf = clusterPips * sc
+float missEff   = missPips * sc
+float swingMinE = swingMinPips * sc
+float minAtrEff = minAtrPips * sc
+int   swingDayE = math.round(swingDays * sc)
 float atr     = ta.atr(14)
 float atrPips = atr / pip
 
@@ -97,7 +124,7 @@ f_daily() =>
     float nAbove = math.sum(close > h ? 1.0 : 0.0, dHoldDays)
     [close[1], h[1], close[1 + dLookback], nAbove[1], ta.atr(14)[1]]
 
-[dClose, dHma, dCloseBack, dNAbove, dAtr] = request.security(syminfo.tickerid, "D", f_daily(), lookahead = barmerge.lookahead_on)
+[dClose, dHma, dCloseBack, dNAbove, dAtr] = request.security(syminfo.tickerid, biasTF, f_daily(), lookahead = barmerge.lookahead_on)
 
 bool dUp = dClose > dHma and dClose > dCloseBack and dNAbove == dHoldDays
 bool dDn = dClose < dHma and dClose < dCloseBack and dNAbove == 0
@@ -134,7 +161,7 @@ f_h4() =>
     bool lastBot = low <= rl + tol
     [ph[1], phRev[1], pl[1], plRev[1], rh[1], rl[1], topEp[1], botEp[1], lastTop[1], lastBot[1], time[1]]
 
-[h4Ph, h4PhRev, h4Pl, h4PlRev, rHigh, rLow, h4TopEp, h4BotEp, h4LastTop, h4LastBot, h4Time] = request.security(syminfo.tickerid, "240", f_h4(), lookahead = barmerge.lookahead_on)
+[h4Ph, h4PhRev, h4Pl, h4PlRev, rHigh, rLow, h4TopEp, h4BotEp, h4LastTop, h4LastBot, h4Time] = request.security(syminfo.tickerid, zoneTF, f_h4(), lookahead = barmerge.lookahead_on)
 
 // Retests of each range edge after the bar that set it (1 = first retest)
 int topRetest = (h4LastTop ? h4TopEp : h4TopEp + 1) - 1
@@ -158,17 +185,17 @@ var array<int>   swT = array.new<int>()
 var array<bool>  swH = array.new<bool>()
 bool h4New = h4Time != h4Time[1]
 if useSwings and h4New
-    if not na(h4Ph) and h4PhRev >= swingMinPips * pip
+    if not na(h4Ph) and h4PhRev >= swingMinE * pip
         swP.push(h4Ph)
         swT.push(h4Time)
         swH.push(true)
-    if not na(h4Pl) and h4PlRev >= swingMinPips * pip
+    if not na(h4Pl) and h4PlRev >= swingMinE * pip
         swP.push(h4Pl)
         swT.push(h4Time)
         swH.push(false)
     f_cap(swP, swT, swH, true)
     f_cap(swP, swT, swH, false)
-while swT.size() > 0 and swT.first() < time - swingDays * 86400000
+while swT.size() > 0 and swT.first() < time - swingDayE * 86400000
     swP.shift()
     swT.shift()
     swH.shift()
@@ -231,7 +258,7 @@ var float mVah = na
 var float mVal = na
 
 float vol = na(volume) or volume <= 0 ? 1.0 : volume
-if timeframe.change("W")
+if timeframe.change(loTF)
     [p1, p2, p3] = f_profile(wH, wL, wV)
     wPoc := p1
     wVah := p2
@@ -239,7 +266,7 @@ if timeframe.change("W")
     wH.clear()
     wL.clear()
     wV.clear()
-if timeframe.change("M")
+if timeframe.change(hiTF)
     [q1, q2, q3] = f_profile(mH, mL, mV)
     mPoc := q1
     mVah := q2
@@ -247,7 +274,7 @@ if timeframe.change("M")
     mH.clear()
     mL.clear()
     mV.clear()
-if timeframe.change("D")
+if timeframe.change(anchTF)
     sesH.clear()
     sesL.clear()
     sesV.clear()
@@ -264,7 +291,7 @@ sesV.push(vol)
 // ─────────────────────────────────────────────────────────────────────────────
 // 15m context (Step 3)
 // ─────────────────────────────────────────────────────────────────────────────
-float vw     = ta.vwap(hlc3)
+float vw     = ta.vwap(hlc3, timeframe.change(anchTF))
 float vSlope = vw - vw[VWAP_BARS]
 int vState   = vSlope > vwapFlatAtr * atr ? 1 : vSlope < -vwapFlatAtr * atr ? -1 : 0
 
@@ -272,7 +299,7 @@ float hFast  = ta.hma(close, hmaFastLen)
 float hSlope = hFast - hFast[3]
 int hState   = hSlope > 0.1 * atr ? 1 : hSlope < -0.1 * atr ? -1 : 0
 
-bool inWin = not na(time(timeframe.period, sessWin, TZ))
+bool inWin = not is15 or not na(time(timeframe.period, sessWin, TZ))
 
 // Chop: alternating colours, or slightly fewer flips plus doji / two-sided-wick candles
 f_chop() =>
@@ -304,7 +331,7 @@ if barstate.isfirst
 int barEndMin = hour(time_close, TZ) * 60 + minute(time_close, TZ)
 bool newsBlock = false
 for nm in newsMin
-    if math.abs(barEndMin - nm) <= newsBuf
+    if is15 and math.abs(barEndMin - nm) <= newsBuf
         newsBlock := true
 
 // Position sizing: convert the quote currency's pip value into the account currency
@@ -347,7 +374,7 @@ f_add(array<float> lp, array<string> ln, float v, string name) =>
 f_score(float L, array<float> lp) =>
     int cnt = 0
     for v in lp
-        if math.abs(v - L) <= clusterPips * pip
+        if math.abs(v - L) <= clusterEf * pip
             cnt += 1
     cnt
 
@@ -356,7 +383,7 @@ f_names(float L, array<float> lp, array<string> ln) =>
     int n = lp.size()
     if n > 0
         for i = 0 to n - 1
-            if math.abs(lp.get(i) - L) <= clusterPips * pip
+            if math.abs(lp.get(i) - L) <= clusterEf * pip
                 string nm = ln.get(i)
                 if not str.contains(out, nm)
                     out := out == "" ? nm : out + " + " + nm
@@ -367,7 +394,7 @@ f_nextLevel(int dir, float entry, float L, array<float> lp) =>
     float best = na
     for v in lp
         bool beyond = dir == 1 ? v > entry + tol : v < entry - tol
-        if beyond and math.abs(v - L) > clusterPips * pip
+        if beyond and math.abs(v - L) > clusterEf * pip
             if na(best) or (dir == 1 ? v < best : v > best)
                 best := v
     best
@@ -456,7 +483,7 @@ f_eval(int dir, bool enabled, array<float> lp, array<string> ln) =>
                 names := f_names(lvl, lp, ln)
         if pat != ""
             float entry = close
-            float buf   = bufPips * pip
+            float buf   = bufEff * pip
             if stopMode == "ATR multiple"
                 sl := entry - dir * stopAtrMult * atr
             else if isRange
@@ -473,13 +500,13 @@ f_eval(int dir, bool enabled, array<float> lp, array<string> ln) =>
             rr := na(tp) or sd == 0 ? na : dir * (tp - entry) / sd
             int retest = dir == 1 ? botRetest : topRetest
             int vAgree = vState * dir
-            if why == "" and atrPips < minAtrPips
-                why := "ATR " + str.tostring(atrPips, "#.0") + " pips < " + str.tostring(minAtrPips) + " (market asleep)"
+            if why == "" and atrPips < minAtrEff
+                why := "ATR " + str.tostring(atrPips, "#.0") + " pips < " + str.tostring(minAtrEff) + " (market asleep)"
             if why == "" and newsBlock
                 why := "News blackout"
             if why == "" and chop
                 why := "Chop: candles alternating"
-            if why == "" and math.abs(close - lvl) > missPips * pip
+            if why == "" and math.abs(close - lvl) > missEff * pip
                 why := "Missed it: " + f_pips(math.abs(close - lvl)) + " pips from level"
             if why == "" and high - low > maxCandleAtr * atr
                 why := "Oversized confirmation candle"
@@ -503,7 +530,7 @@ f_eval(int dir, bool enabled, array<float> lp, array<string> ln) =>
                 for t in trades
                     if not (addMode == "After breakeven (1R)" ? t.hit1R : t.hit2R)
                         riskFree := false
-                    if math.abs(t.lvl - lvl) <= clusterPips * pip
+                    if math.abs(t.lvl - lvl) <= clusterEf * pip
                         sameLvl := true
                 if addMode == "Never"
                     why := "Trade already open"
@@ -558,7 +585,7 @@ if nT > 0
                     msg     := "+1R: move stop to breakeven " + f_px(t.entry)
                 if not t.hit2R and favour >= 2 * t.risk
                     t.hit2R := true
-                    msg     := t.trend ? "+2R: close 50%" + (trailing ? ", trail the rest behind 15m swings" : ", rest at target " + f_px(t.tp)) : "+2R: consider closing 100% (range)"
+                    msg     := t.trend ? "+2R: close 50%" + (trailing ? ", trail the rest behind chart swings" : ", rest at target " + f_px(t.tp)) : "+2R: consider closing 100% (range)"
                 bool tpHit = t.dir == 1 ? high >= t.tp : low <= t.tp
                 if tpHit and not (trailing and t.hit2R)
                     float bank = t.trend and t.hit2R ? 1.0 : 0.0
@@ -567,7 +594,7 @@ if nT > 0
                     msg   := "TARGET hit"
                 // Trail the runner behind the latest 15m swing formed after entry
                 if na(exitR) and trailing and t.hit2R
-                    float cand = t.dir == 1 ? (lastLoBar > t.bar ? lastLo - bufPips * pip : na) : (lastHiBar > t.bar ? lastHi + bufPips * pip : na)
+                    float cand = t.dir == 1 ? (lastLoBar > t.bar ? lastLo - bufEff * pip : na) : (lastHiBar > t.bar ? lastHi + bufEff * pip : na)
                     if not na(cand) and (t.dir == 1 ? cand > t.stop and cand < close : cand < t.stop and cand > close)
                         t.stop := cand
                         msg    := (msg == "" ? "" : msg + "; ") + "trail stop to " + f_px(cand)
@@ -585,7 +612,7 @@ if nT > 0
             if msg != ""
                 mgmtMsg := (mgmtMsg == "" ? "" : mgmtMsg + "\n") + side + " " + f_px(t.entry) + ": " + msg
 if alertMgmt and mgmtMsg != ""
-    alert(syminfo.ticker + " · " + mgmtMsg, alert.freq_once_per_bar_close)
+    alert(tfTag + syminfo.ticker + " · " + mgmtMsg, alert.freq_once_per_bar_close)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Build today's level set
@@ -593,16 +620,16 @@ if alertMgmt and mgmtMsg != ""
 array<float>  lvlP = array.new<float>()
 array<string> lvlN = array.new<string>()
 if useMonthly
-    f_add(lvlP, lvlN, mPoc, "mPOC")
-    f_add(lvlP, lvlN, mVah, "mVAH")
-    f_add(lvlP, lvlN, mVal, "mVAL")
+    f_add(lvlP, lvlN, mPoc, hiPfx + "POC")
+    f_add(lvlP, lvlN, mVah, hiPfx + "VAH")
+    f_add(lvlP, lvlN, mVal, hiPfx + "VAL")
 if useWeekly
-    f_add(lvlP, lvlN, wPoc, "wPOC")
-    f_add(lvlP, lvlN, wVah, "wVAH")
-    f_add(lvlP, lvlN, wVal, "wVAL")
+    f_add(lvlP, lvlN, wPoc, loPfx + "POC")
+    f_add(lvlP, lvlN, wVah, loPfx + "VAH")
+    f_add(lvlP, lvlN, wVal, loPfx + "VAL")
 if useSwings and swP.size() > 0
     for i = 0 to swP.size() - 1
-        f_add(lvlP, lvlN, swP.get(i), swH.get(i) ? "4H high" : "4H low")
+        f_add(lvlP, lvlN, swP.get(i), swH.get(i) ? zoneNm + " high" : zoneNm + " low")
 if useRound
     float rStep = 50 * pip
     float rBase = math.floor(close / rStep) * rStep
@@ -634,7 +661,7 @@ if sigDir != 0
     string lotsTxt = na(sigLots) ? "n/a (check account currency)" : str.tostring(sigLots, "#.00")
     float  be      = close + sigDir * sigRisk
     float  twoR    = close + sigDir * 2 * sigRisk
-    string msg = syminfo.ticker + " · MARKET " + side + " @ " + f_px(close) +
+    string msg = tfTag + syminfo.ticker + " · MARKET " + side + " @ " + f_px(close) +
          "\nSL " + f_px(sigSL) + " (" + f_pips(sigRisk) + " pips)" +
          "\nTP " + f_px(sigTP) + " (" + f_pips(math.abs(sigTP - close)) + " pips · " + str.tostring(sigRR, "#.0") + "R)" +
          "\n1R → stop to BE: " + f_px(be) +
@@ -675,7 +702,7 @@ if alertZone and active and sigDir == 0
             bool nowAt  = high >= z - tol and low <= z + tol
             bool wasAt  = high[1] >= z - tol and low[1] <= z + tol
             if nowAt and not wasAt
-                alert(syminfo.ticker + " at " + zN.get(i) + " " + f_px(z) + " · watch the 15m for confirmation", alert.freq_once_per_bar_close)
+                alert(tfTag + syminfo.ticker + " at " + zN.get(i) + " " + f_px(z) + " · watch the 15m for confirmation", alert.freq_once_per_bar_close)
                 break
 
 // Static-message alert conditions (for users who prefer them over "Any alert() function call")
@@ -713,13 +740,13 @@ if barstate.islast and showLevels
     if n > 0
         for i = 0 to n - 1
             string nm = lvlN.get(i)
-            color col = str.startswith(nm, "m") ? color.purple : str.startswith(nm, "w") ? color.blue : nm == "Round" ? color.gray : color.orange
+            color col = str.startswith(nm, hiPfx) ? color.purple : str.startswith(nm, loPfx) ? color.blue : nm == "Round" ? color.gray : color.orange
             f_drawLevel(lvlP.get(i), nm, col, line.style_solid)
     if isRange
         f_drawLevel(rHigh, "Range high", color.silver, line.style_dashed)
         f_drawLevel(rLow, "Range low", color.silver, line.style_dashed)
     [sp, sva, svl] = f_profile(sesH, sesL, sesV)
-    f_drawLevel(sp, "Session POC", color.yellow, line.style_dotted)
+    f_drawLevel(sp, "Developing POC", color.yellow, line.style_dotted)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Status table
@@ -743,15 +770,16 @@ if barstate.islast and showTable
         Trade lt = trades.last()
         trd := str.tostring(trades.size()) + " open · last " + (lt.dir == 1 ? "BUY" : "SELL") + " @ " + f_px(lt.entry) + " · SL " + f_px(lt.stop) + " · TP " + f_px(lt.tp)
     string res  = nTrades == 0 ? "no trades yet" : str.tostring(nTrades) + " trades · " + str.tostring(100.0 * nWin / nTrades, "#") + "% win · avg " + str.tostring(sumR / nTrades, "#.##") + "R · total " + str.tostring(sumR, "#.#") + "R"
-    f_row(0, "Chart", timeframe.period == "15" ? "15m ✓" : "Switch to 15m!", timeframe.period == "15" ? ok : bad)
+    bool tfOk = stack == "15m" ? timeframe.period == "15" : stack == "4H" ? timeframe.period == "240" : timeframe.period == "D"
+    f_row(0, "Stack", stack + " · bias " + biasTF + " · zones " + zoneNm + (tfOk ? " ✓" : " · chart TF mismatch!"), tfOk ? ok : bad)
     f_row(1, "Mode", modeTxt, isRange ? warn : ok)
-    f_row(2, "Daily vs HMA " + str.tostring(hmaSlowLen), na(dHma) ? "n/a" : dClose > dHma ? "above" : "below", color.white)
-    f_row(3, "15m ATR", str.tostring(atrPips, "#.0") + " pips", atrPips >= minAtrPips ? ok : bad)
+    f_row(2, biasTF + " vs HMA " + str.tostring(hmaSlowLen), na(dHma) ? "n/a" : dClose > dHma ? "above" : "below", color.white)
+    f_row(3, "Chart ATR", str.tostring(atrPips, "#.0") + " pips", atrPips >= minAtrEff ? ok : bad)
     f_row(4, "VWAP", vTxt, vCol)
     f_row(5, "HMA " + str.tostring(hmaFastLen), hTxt, hCol)
-    f_row(6, "Window", inWin ? "OPEN" : "closed", inWin ? ok : color.gray)
-    f_row(7, "News", newsBlock ? "BLACKOUT" : newsMin.size() == 0 ? "none entered" : "clear", newsBlock ? bad : newsMin.size() == 0 ? warn : ok)
+    f_row(6, "Window", not is15 ? "n/a (any close)" : inWin ? "OPEN" : "closed", inWin ? ok : color.gray)
+    f_row(7, "News", not is15 ? "check calendar yourself" : newsBlock ? "BLACKOUT" : newsMin.size() == 0 ? "none entered" : "clear", newsBlock ? bad : newsMin.size() == 0 ? warn : ok)
     f_row(8, "Chop", chop ? "YES · wait" : "no", chop ? bad : ok)
     f_row(9, "Open trades", trd, trades.size() == 0 ? color.gray : color.white)
     f_row(10, "Model (" + (exitModel == "Fixed target" ? "fixed" : "trail") + ")", res, sumR >= 0 ? ok : bad)
-    f_row(11, "Daily ATR", str.tostring(dAtr / pip, "#") + " pips", color.white)
+    f_row(11, biasTF + " ATR", str.tostring(dAtr / pip, "#") + " pips", color.white)
