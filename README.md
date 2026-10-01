@@ -18,8 +18,9 @@ VRVP is not used (it depends on the visible screen).
 
 **Gaps** (candle low above the previous high or high below the previous low, ≥ 1 pip × stack multiplier) are tracked until filled; partial fills shrink them. They are never an entry level. A gap edge within the confluence radius of a level adds +1 confluence; a gap between entry and target, or at the target, is noted in the alert. Drawn as pink boxes. Real gaps in FX are rare outside the Sunday open and news spikes.
 
-The 4H and Daily stacks are the **same rules scaled up, not a separately designed strategy**.
-Nothing in the PDF was written for them, so treat them as untested until the model results say otherwise.
+**Use the 15m chart only.** The 4H and Daily stacks are the same rules scaled up, and their model results
+were negative (4H: 441 trades, −0.22R avg, 95% CI −0.37R to −0.07R) or flat (Daily: 123 trades, +0.01R).
+The 15m is **unproven**, not proven: 17 trades, +0.17R avg, 95% CI −0.59R to +0.93R. Paper-trade it to 100+ trades before risking money.
 News blackout only works on the 15m stack; on 4H/D check the calendar yourself.
 4H and Daily trades are held overnight and often over weekends — check that your prop-firm account type allows it.
 
@@ -30,7 +31,7 @@ News blackout only works on the 15m stack; on 4H/D check the calendar yourself.
 
 ### Alerts (one-time setup, once per pair and timeframe)
 Pine scripts cannot create alerts themselves. On each pair's chart:
-*Create alert* → Condition: **NY Session Level Trader** → **Any alert() function call** → Trigger: *Once per bar close*.
+*Create alert* → Condition: **Level Trader 15m-4H-D** → **Any alert() function call** → Trigger: *Once per bar close*.
 That single alert carries entry signals, 1R/2R/stop/target management messages, and (optional) level-reached heads-ups.
 
 ### How the checklist is translated into rules (15m stack; higher stacks swap timeframes per the table above)
@@ -41,7 +42,7 @@ That single alert carries entry signals, 1R/2R/stop/target management messages, 
 | Monthly / Weekly PVP | POC/VAH/VAL of the **previous** month/week, computed from the chart's tick volume (70% value area). |
 | 4H swings (max 4–6) | 4H pivots (5 bars each side) with ≥30-pip reversal, last 21 days, max 3 highs + 3 lows. |
 | Confluence | Number of levels within 8 pips. ≥2 = strong level. |
-| Range edges | Highest high / lowest low of the last 30 completed 4H bars. |
+| Range edges | Highest high / lowest low of the last 30 completed 4H bars. With *Range: only trade the HMA 200 side* (default on), no range longs below the Daily HMA 200 and no range shorts above it. |
 | VWAP traffic light | Session VWAP 8-bar slope. Trend: must agree, or level must be strong. Range: flat/agree, or strong level. |
 | ATR ≥ 4 pips | 15m ATR(14) in pips. |
 | HMA 55 | Not a filter; flagged as "consider 1.5R exit" when not with you. |

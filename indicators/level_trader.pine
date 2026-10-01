@@ -65,6 +65,7 @@ chopBars     = input.int(6, "Chop: candles checked", minval = 3, maxval = 20, gr
 chopAlt      = input.int(4, "Chop: min colour flips", minval = 2, maxval = 19, group = G_KILL)
 chopIndec    = input.int(2, "Chop: indecision candles that cost one flip", minval = 1, maxval = 20, group = G_KILL, tooltip = "Indecision candle = body under 35% of its range, or wicks of 25%+ on both sides. With this many of them, one fewer colour flip is enough to call chop.")
 maxRetest    = input.int(2, "Range: max retests of an edge", minval = 1, group = G_KILL)
+rangeHmaFilt = input.bool(true, "Range: only trade the HMA 200 side", group = G_KILL, tooltip = "No range longs while the bias-timeframe close is below its HMA 200 (Daily on the 15m chart), no range shorts while it is above. Turn off and compare the Model results row to measure what it does.")
 vwapFlatAtr  = input.float(0.25, "VWAP flat if 8-bar slope < ATR ×", minval = 0, step = 0.05, group = G_KILL)
 newsTimes    = input.string("", "Red-flag news today (NY time, e.g. 08:30,10:00; 15m stack only)", group = G_KILL, tooltip = "Pine cannot read forexfactory. Type today's red-flag times here; no entries within ± the blackout. Note: the times apply to every day on the chart, including history.")
 newsBuf      = input.int(15, "News blackout ± minutes", minval = 0, group = G_KILL)
@@ -593,6 +594,8 @@ f_eval(int dir, bool enabled, array<float> lp, array<string> ln) =>
                 why := "Range too narrow"
             if why == "" and isRange and retest > maxRetest
                 why := "Retest #" + str.tostring(retest) + " of range edge"
+            if why == "" and isRange and rangeHmaFilt and not na(dHma) and (dir == 1 ? dClose < dHma : dClose > dHma)
+                why := "Range " + (dir == 1 ? "long below " : "short above ") + biasNm + " HMA " + str.tostring(hmaSlowLen)
             if why == "" and sd > 0 and spreadPips * pip / sd * 100 > maxSpreadPct
                 why := "Cost " + str.tostring(spreadPips, "#.0") + " pips = " + str.tostring(spreadPips * pip / sd * 100, "#") + "% of stop"
             if why == "" and is15 and not (isRange ? vAgree >= 0 : vAgree == 1) and score < 2
@@ -853,7 +856,7 @@ if barstate.islast and showTable
     if trades.size() > 0
         Trade lt = trades.last()
         trd := str.tostring(trades.size()) + " open · last " + (lt.dir == 1 ? "BUY" : "SELL") + " @ " + f_px(lt.entry) + " · SL " + f_px(lt.stop) + " · TP " + f_px(lt.tp)
-    string res  = nTrades == 0 ? "no trades yet" : str.tostring(nTrades) + " trades · " + str.tostring(100.0 * nWin / nTrades, "#") + "% win · avg " + str.tostring(sumR / nTrades, "#.##") + "R · total " + str.tostring(sumR, "#.#") + "R"
+    string res  = (rangeHmaFilt ? "HMA filter ON · " : "HMA filter OFF · ") + (nTrades == 0 ? "no trades yet" : str.tostring(nTrades) + " trades · " + str.tostring(100.0 * nWin / nTrades, "#") + "% win · avg " + str.tostring(sumR / nTrades, "#.##") + "R · total " + str.tostring(sumR, "#.#") + "R")
     bool tfOk = stack == "15m" ? timeframe.period == "15" : stack == "4H" ? timeframe.period == "240" : timeframe.period == "D"
     f_row(0, "Stack", stack + " · bias " + biasNm + " · zones " + zoneNm + (tfOk ? " ✓" : " · chart TF mismatch!"), tfOk ? ok : bad)
     f_row(1, "Mode", modeTxt, isRange ? warn : ok)
