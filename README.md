@@ -8,7 +8,7 @@ Built from the *Trading System v8* execution manual. One script per job, in the 
 |---|---|---|
 | `indicators/v8_daily.pine` | Part II, Daily D1–D12: bias + levels, **never entries** | built, not yet compiled |
 | `indicators/v8_4h.pine` | Part III, 4H H0–H14: Zone 1 / Zone 2, invalidation, target, zone alerts, **never entries** | built, not yet compiled |
-| `strategies/v8_15m.pine` | Part IV 15M M0–M16 + Part VII setups + Part VIII management + Part X no-trade: **the only script that trades** (strategy: alerts + Strategy Tester) | built, not yet compiled |
+| `indicators/v8_15m.pine` | Part IV 15M M0–M16 + Part VII setups + Part VIII management + Part X no-trade: **the only script that gives BUY/SELL with entry, stop loss and take profit** | built, not yet compiled |
 
 ### v8 Daily (`indicators/v8_daily.pine`), use on a Daily chart
 | Step | Mechanized as |
@@ -48,9 +48,9 @@ Alerts: bias change at the daily close (and optionally the daily sentence every 
 Alerts: **price trades into Zone 1 or Zone 2 → "open the 15M"** (real time, once per bar). This replaces manually placed zone alerts.
 Zones are computed on the latest bar from completed candles, so this script is a planning tool: it has no history of past zones to backtest yet.
 
-### v8 15M (`strategies/v8_15m.pine`), use on a 15M chart
-Self-contained: it recomputes the Daily bias and rebuilds the 4H zones at every 4H close with the same rules as the two scripts above,
-so one file can be backtested. Volume profiles are kept incrementally in 2-pip price buckets (fast enough for a full year of 15M).
+### v8 15M (`indicators/v8_15m.pine`), use on a 15M chart
+An indicator: on every signal it draws the entry (grey; dashed = limit order), stop loss (red) and take profit (green), labels the exit with its result in R, and sends an alert.
+Self-contained: it recomputes the Daily bias and rebuilds the 4H zones at every 4H close with the same rules as the two scripts above. Volume profiles are kept incrementally in 2-pip price buckets (fast enough for a full year of 15M).
 
 | Step | Mechanized as |
 |---|---|
@@ -64,12 +64,12 @@ so one file can be backtested. Volume profiles are kept incrementally in 2-pip p
 | M11 | News times typed into the settings, ± 15 min. |
 | M12 | Stop beyond the sweep low/high (or beyond the zone) + 0.12× 15M ATR + spread. |
 | M13 | First obstacle beyond the entry from the 4H target list; under 2R → skip. |
-| M14 | 0.1% of the account, quote currency converted to the account currency, rounded down to 0.01 lot. |
+| M14 | 0.1% of the account, quote currency converted to the account currency, rounded down to 0.01 lot (shown in the alert). |
 | Risk rules | Max 3 positions, max 0.2% open risk per pair (trades not yet at break-even), never add to a loser, no opposite position. |
 | Part VIII | Default T4: stop or full planned target, nothing else. Option T3: after +1.5R the stop follows newly confirmed 15M swings. No automatic break-even. |
 
-Table: bias, zones and their state, chop score, VWAP/SVP, news, open positions, results in R, **the funnel**
-(4H plans → zone touches → triggers → confirmed → orders) and the top skip reasons, so an empty Strategy Tester always shows where setups stopped.
+Table: bias, zones and their state, chop score, VWAP/SVP, news, open trades, results in R after costs (stop assumed first when a candle hits both), **the funnel**
+(4H plans → zone touches → triggers → confirmed → signals) and the top skip reasons, so you can see where setups stop.
 Every order alert includes the manual's pre-click script. Skipped setups are marked with a grey × (hover for the reason).
 Not checked: correlated USD exposure across pairs (one chart cannot see other charts).
 

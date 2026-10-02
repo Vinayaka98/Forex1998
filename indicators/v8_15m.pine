@@ -1,17 +1,14 @@
 //@version=6
 // Trading System v8, Part IV (15M execution, M0-M16) with Part VII setups, Part VIII
-// management and Part X no-trade rules. Written as a STRATEGY: the same file sends live
-// alerts ("Any alert() function call") and fills the Strategy Tester with a trade list.
+// management and Part X no-trade rules. An INDICATOR: it draws where to enter, the stop
+// loss and the take profit, and sends the alerts ("Any alert() function call").
 //
 // Pipeline on a 15M chart:
 //   Daily bias (same rules as v8 Daily)  ->  4H zones rebuilt at every 4H close
 //   (same rules as v8 4H)  ->  price enters a zone  ->  approved trigger  ->  structure
-//   shift  ->  chop / news / VWAP-SVP / room / exposure checks  ->  0.1% order.
+//   shift  ->  chop / news / VWAP-SVP / room / exposure checks  ->  BUY/SELL with SL, TP, size.
 // Volume profiles are kept incrementally in price buckets so a full backtest stays fast.
-strategy("v8 15M Execution", shorttitle = "v8 15M", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 300, max_bars_back = 2000,
-     initial_capital = 120000, currency = currency.CAD, default_qty_type = strategy.fixed, pyramiding = 3,
-     process_orders_on_close = true, slippage = 5, commission_type = strategy.commission.percent, commission_value = 0,
-     margin_long = 1, margin_short = 1)
+indicator("v8 15M Entries", shorttitle = "v8 15M", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 300, max_bars_back = 2000)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs
@@ -24,12 +21,12 @@ const string G_M  = "15M execution"
 const string G_T  = "Trade management"
 const string G_O  = "Display & alerts"
 
-accountSize = input.float(120000, "Account size (keep equal to Properties → Initial capital)", minval = 1, group = G_R)
+accountSize = input.float(120000, "Account size", minval = 1, group = G_R)
 accountCcy  = input.string("CAD", "Account currency", group = G_R)
 riskPct     = input.float(0.1, "Risk per trade %", minval = 0.01, maxval = 0.1, step = 0.01, group = G_R, tooltip = "The manual caps this at 0.1%.")
 maxOpen     = input.int(3, "Max open positions (this pair)", minval = 1, maxval = 3, group = G_R)
 maxOpenRisk = input.float(0.2, "Max open risk % (this pair)", minval = 0.1, maxval = 0.3, step = 0.05, group = G_R, tooltip = "Trades whose stop is not yet at break-even or better count as open risk. Correlated risk across pairs cannot be seen from one chart: check it yourself.")
-spreadPips  = input.float(1.0, "Spread + commission (pips), added to the stop buffer", minval = 0, step = 0.1, group = G_R)
+spreadPips  = input.float(1.0, "Spread + commission (pips): added to the stop buffer and charged in the results", minval = 0, step = 0.1, group = G_R)
 
 dSwingLen  = input.int(5, "Daily swing strength", minval = 2, group = G_D)
 dMinRevAtr = input.float(1.5, "Daily meaningful swing (× Daily ATR)", minval = 0, step = 0.1, group = G_D)
@@ -778,9 +775,14 @@ type Trade
     float  risk
     bool   filled
     bool   limitOrder
+    line   lE
+    line   lS
+    line   lT
 
 var array<Trade> trades = array.new<Trade>()
-var int lastClosed = 0
+var int   nClosed = 0
+var int   nWins   = 0
+var float sumR    = 0.0
 var int nArms = 0
 var int nTrig = 0
 var int nConf = 0
@@ -789,39 +791,52 @@ var int nLimitPlaced = 0
 var map<string, int> skips = map.new<string, int>()
 var string lastScript = ""
 
-// Fills, expiries, closes
-if trades.size() > 0
+// Limit fills, expiries, stop / target hits (stop assumed first if a candle hits both)
+f_close(Trade t) =>
+    line.set_x2(t.lE, bar_index)
+    line.set_x2(t.lS, bar_index)
+    line.set_x2(t.lT, bar_index)
+    line.set_extend(t.lE, extend.none)
+    line.set_extend(t.lS, extend.none)
+    line.set_extend(t.lT, extend.none)
+    true
+
+if barstate.isconfirmed and trades.size() > 0
     for i = trades.size() - 1 to 0
         Trade t = trades.get(i)
-        bool isOpen = false
-        int ot = strategy.opentrades
-        if ot > 0
-            for j = 0 to ot - 1
-                if strategy.opentrades.entry_id(j) == t.id
-                    isOpen := true
-                    if not t.filled
-                        t.filled := true
-                        t.entry  := strategy.opentrades.entry_price(j)
-                        t.risk   := math.abs(t.entry - t.stop)
-        if not t.filled and not isOpen and bar_index - t.bar > limitBars
-            strategy.cancel(t.id)
-            trades.remove(i)
-        else if t.filled and not isOpen
-            trades.remove(i)
-        else if t.filled and exitMode == "Trail 15M structure after 1.5R (T3)"
-            float fav = t.dir == 1 ? high - t.entry : t.entry - low
-            if fav >= 1.5 * t.risk
-                float cand = t.dir == 1 ? (slBar > t.bar ? sl1 - stopBufAtr * atr15 : na) : (shBar > t.bar ? sh1 + stopBufAtr * atr15 : na)
-                if not na(cand) and (t.dir == 1 ? cand > t.stop and cand < close : cand < t.stop and cand > close)
-                    t.stop := cand
-                    strategy.exit("x" + t.id, from_entry = t.id, stop = t.stop, limit = t.tp, comment_loss = "Trail", comment_profit = "TP")
-                    alert("[15M] " + syminfo.ticker + " move stop to " + f_px(cand) + " (T3: behind new 15M structure)", alert.freq_once_per_bar_close)
-
-if strategy.closedtrades > lastClosed
-    for k = lastClosed to strategy.closedtrades - 1
-        float r = strategy.closedtrades.profit(k) / riskAmt
-        alert("[15M] " + syminfo.ticker + " trade closed at " + f_px(strategy.closedtrades.exit_price(k)) + " · result " + str.tostring(r, "#.##") + "R", alert.freq_once_per_bar_close)
-    lastClosed := strategy.closedtrades
+        string side = t.dir == 1 ? "BUY" : "SELL"
+        if not t.filled and bar_index > t.bar
+            if t.dir == 1 ? low <= t.entry : high >= t.entry
+                t.filled := true
+                alert("[15M] " + syminfo.ticker + " " + side + " LIMIT filled @ " + f_px(t.entry) + " · SL " + f_px(t.stop) + " · TP " + f_px(t.tp), alert.freq_once_per_bar_close)
+            else if bar_index - t.bar >= limitBars
+                f_close(t)
+                label.new(bar_index, t.entry, "limit expired", style = label.style_label_left, color = color.new(color.gray, 70), textcolor = color.white, size = size.tiny)
+                alert("[15M] " + syminfo.ticker + " " + side + " LIMIT @ " + f_px(t.entry) + " expired unfilled: cancel the order", alert.freq_once_per_bar_close)
+                trades.remove(i)
+                continue
+        if t.filled and bar_index > t.bar
+            bool  stopHit = t.dir == 1 ? low <= t.stop : high >= t.stop
+            bool  tpHit   = t.dir == 1 ? high >= t.tp : low <= t.tp
+            float exitPx  = stopHit ? t.stop : tpHit ? t.tp : na
+            if not na(exitPx)
+                float r = t.dir * (exitPx - t.entry) / t.risk - spreadPips * pip / t.risk
+                nClosed += 1
+                nWins   += r > 0 ? 1 : 0
+                sumR    += r
+                f_close(t)
+                label.new(bar_index, exitPx, (stopHit ? "SL " : "TP ") + str.tostring(r, "#.##") + "R", style = label.style_label_left, color = color.new(r > 0 ? color.green : color.red, 60), textcolor = color.white, size = size.tiny)
+                alert("[15M] " + syminfo.ticker + " " + side + " closed at " + (stopHit ? "STOP " : "TARGET ") + f_px(exitPx) + " · result " + str.tostring(r, "#.##") + "R (after costs)", alert.freq_once_per_bar_close)
+                trades.remove(i)
+            else if exitMode == "Trail 15M structure after 1.5R (T3)"
+                float fav = t.dir == 1 ? high - t.entry : t.entry - low
+                if fav >= 1.5 * t.risk
+                    float cand = t.dir == 1 ? (slBar > t.bar ? sl1 - stopBufAtr * atr15 : na) : (shBar > t.bar ? sh1 + stopBufAtr * atr15 : na)
+                    if not na(cand) and (t.dir == 1 ? cand > t.stop and cand < close : cand < t.stop and cand > close)
+                        t.stop := cand
+                        line.set_xy1(t.lS, bar_index, cand)
+                        line.set_xy2(t.lS, bar_index + 1, cand)
+                        alert("[15M] " + syminfo.ticker + " move stop to " + f_px(cand) + " (T3: behind new 15M structure)", alert.freq_once_per_bar_close)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Zone execution: touch → trigger → structure shift → checks → order
@@ -961,16 +976,19 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
                         else
                             string id = (dir == 1 ? "L" : "S") + str.tostring(bar_index)
                             string tags = "Setup " + z.setup + " · " + z.trigName + (shifted ? " + shift" : " (continuation)") + " · VWAP " + (vwapFor ? "with" : "against") + " · Vol " + (volOk ? "OK" : "weak") + " · HMA55 " + (hfDir == dir ? "with" : hfDir == 0 ? "flat" : "against")
-                            strategy.entry(id, dir == 1 ? strategy.long : strategy.short, qty = units, limit = chase ? entry : na, comment = side + " " + z.setup + " " + z.trigName)
-                            strategy.exit("x" + id, from_entry = id, stop = sl, limit = tg, comment_loss = "SL", comment_profit = "TP")
-                            trades.push(Trade.new(id, dir, bar_index, entry, sl, tg, riskPx, false, chase))
+                            line lE = line.new(bar_index, entry, bar_index + 1, entry, color = color.gray, width = 2, extend = extend.right, style = chase ? line.style_dashed : line.style_solid)
+                            line lS = line.new(bar_index, sl, bar_index + 1, sl, color = color.red, width = 2, extend = extend.right)
+                            line lT = line.new(bar_index, tg, bar_index + 1, tg, color = color.green, width = 2, extend = extend.right)
+                            label.new(bar_index, sl, "SL " + f_px(sl), style = label.style_label_right, color = color.new(color.red, 70), textcolor = color.white, size = size.tiny)
+                            label.new(bar_index, tg, "TP " + f_px(tg), style = label.style_label_right, color = color.new(color.green, 70), textcolor = color.white, size = size.tiny)
+                            trades.push(Trade.new(id, dir, bar_index, entry, sl, tg, riskPx, not chase, chase, lE, lS, lT))
                             nEntry += 1
                             nLimitPlaced += chase ? 1 : 0
                             lastScript := "I am trading " + (dir == 1 ? "LONG" : "SHORT") + " because Daily says " + dBiasTxt + ". My 4H zone is " + f_px(z.lo) + "-" + f_px(z.hi) + " because it contains " + z.names + ". On 15M, confirmation was " + z.trigName + (shifted ? " + structure shift through " + f_px(shiftLvl) : " (continuation retest)") + ". I am wrong at " + f_px(sl) + ". My target is " + f_px(tg) + " because it is the " + tgName + ". My risk is " + str.tostring(riskPct) + "%. " + (chase ? "Price ran past the anti-chase distance, so this is a LIMIT at the retest level." : "I am not chasing.")
                             string msg = "[15M] " + syminfo.ticker + " " + (chase ? side + " LIMIT @ " + f_px(entry) + " (valid " + str.tostring(limitBars) + " bars)" : "MARKET " + side + " @ " + f_px(entry)) + "\nSL " + f_px(sl) + " (" + str.tostring(riskPx / pip, "#.0") + " pips) · TP " + f_px(tg) + " (" + str.tostring(rr, "#.0") + "R, " + tgName + ")\nSize " + str.tostring(units / 100000, "#.00") + " lots (" + str.tostring(riskPct) + "% = " + str.tostring(riskAmt, "#") + " " + accountCcy + ")\n" + tags + "\n" + lastScript
                             alert(msg, alert.freq_once_per_bar_close)
                             label.new(bar_index, dir == 1 ? low : high, (chase ? side + " LMT " : side + " ") + str.tostring(rr, "#.0") + "R", style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? color.teal : color.red, textcolor = color.white, size = size.small, tooltip = msg)
-                            z.status := (chase ? "limit placed" : "entered") + ": wait for price to leave the zone"
+                            z.status := (chase ? "limit signal" : "signal") + " given: wait for price to leave the zone"
                     if why != ""
                         z.status := "skipped: " + why
                         if showBlock
@@ -1000,10 +1018,12 @@ if barstate.islast and showTable
     f_row(3, "M2 chop", str.tostring(chopScore) + "/5 (flips " + str.tostring(cFlips) + ", 2-wick " + str.tostring(cWicks) + ", VWAP x" + str.tostring(cVwX) + ", sPOC x" + str.tostring(cPocX) + ", HMA55 " + (hfDir == 0 ? "flat" : "sloped") + ")" + (chop ? " · CHOP: wait" : ""), chop ? color.orange : color.white)
     f_row(4, "M3/M4 VWAP / SVP", "VWAP " + f_px(vw) + " " + (vwDir == 1 ? "rising" : vwDir == -1 ? "falling" : "flat") + " · price " + (close > vw ? "above" : "below") + " · session POC " + f_px(sesPoc), color.white)
     f_row(5, "News / window", (newsBlock ? "NEWS BLACKOUT" : newsMin.size() == 0 ? "no news times entered" : "clear") + (useWin ? " · window " + (inWin ? "open" : "closed") : ""), newsBlock ? color.orange : color.white)
-    f_row(6, "Open positions", str.tostring(trades.size()) + " / " + str.tostring(maxOpen), color.white)
-    int ct = strategy.closedtrades
-    f_row(7, "Results", ct == 0 ? "no closed trades" : str.tostring(ct) + " trades · " + str.tostring(100.0 * strategy.wintrades / ct, "#") + "% win · avg " + str.tostring(strategy.netprofit / riskAmt / ct, "#.##") + "R · total " + str.tostring(strategy.netprofit / riskAmt, "#.#") + "R", strategy.netprofit >= 0 ? color.lime : color.red)
-    f_row(8, "Funnel", str.tostring(nPlans) + " 4H plans → " + str.tostring(nArms) + " zone touches → " + str.tostring(nTrig) + " triggers → " + str.tostring(nConf) + " confirmed → " + str.tostring(nEntry) + " orders (" + str.tostring(nLimitPlaced) + " limit)", color.white)
+    string opn = ""
+    for t in trades
+        opn := opn + (opn == "" ? "" : " | ") + (t.dir == 1 ? "BUY " : "SELL ") + (t.filled ? "" : "LIMIT ") + f_px(t.entry) + " SL " + f_px(t.stop) + " TP " + f_px(t.tp)
+    f_row(6, "Open trades", trades.size() == 0 ? "none" : opn, color.white)
+    f_row(7, "Results on this chart", nClosed == 0 ? "no closed trades yet" : str.tostring(nClosed) + " trades · " + str.tostring(100.0 * nWins / nClosed, "#") + "% win · avg " + str.tostring(sumR / nClosed, "#.##") + "R · total " + str.tostring(sumR, "#.#") + "R (after costs)", sumR >= 0 ? color.lime : color.red)
+    f_row(8, "Funnel", str.tostring(nPlans) + " 4H plans → " + str.tostring(nArms) + " zone touches → " + str.tostring(nTrig) + " triggers → " + str.tostring(nConf) + " confirmed → " + str.tostring(nEntry) + " signals (" + str.tostring(nLimitPlaced) + " limit)", color.white)
     string sk = ""
     array<string> keys = skips.keys()
     array<int> vals = array.new<int>()
