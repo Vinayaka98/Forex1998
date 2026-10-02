@@ -7,8 +7,8 @@ Built from the *Trading System v8* execution manual. One script per job, in the 
 | Script | Manual part | Status |
 |---|---|---|
 | `indicators/v8_daily.pine` | Part II, Daily D1–D12: bias + levels, **never entries** | built, not yet compiled |
-| 4H zone builder | Part III, H0–H14 | next |
-| 15M trigger + execution | Part IV, M0–M16 | after 4H |
+| `indicators/v8_4h.pine` | Part III, 4H H0–H14: Zone 1 / Zone 2, invalidation, target, zone alerts, **never entries** | built, not yet compiled |
+| 15M trigger + execution | Part IV, M0–M16 | next |
 
 ### v8 Daily (`indicators/v8_daily.pine`), use on a Daily chart
 | Step | Mechanized as |
@@ -27,6 +27,26 @@ Built from the *Trading System v8* execution manual. One script per job, in the 
 | Bias check | For every LONG/SHORT day: move over the next 5 days in the bias direction (in ATR). Overlapping windows, so indicative only. |
 
 Alerts: bias change at the daily close (and optionally the daily sentence every day). Decisions use the last completed day only.
+
+### v8 4H (`indicators/v8_4h.pine`), use on a 4H chart
+| Step | Mechanized as |
+|---|---|
+| H0 | Daily bias, Daily swings and Daily impulse recomputed from Daily candles with the same rules as v8 Daily (completed days only). Daily NEUTRAL → no zones. |
+| H1 | 4H zigzag swings (5 bars, ≥ 1.5× 4H ATR); pullback/bounce against the Daily is labelled, never used to flip the bias. |
+| H2 | 4H above a rising HMA 200 in a Daily LONG (mirror for SHORT) = strong alignment → zones need 2+ categories. Otherwise "deeper correction" → 3+ categories. |
+| H3 | HMA 55 context; both 4H HMAs against the Daily = "do not rush" warning. |
+| H4 | Weekly VAH/POC/VAL (this week and last) from 1H data; behaviour text per the manual's table (wVAL reclaim, wVAH acceptance, wPOC chop…). |
+| H5 | 4H VRVP stand-in: fixed 28-day profile, nearest HVN/LVN. Daily HVN/LVN from a 120-day profile. |
+| H6/H7 | Latest 4H impulse in the Daily direction that broke the prior swing → Fixed VP + Fib. The Daily impulse's Fixed VP + Fib are transferred too. |
+| H8 | 4H gaps (≥ 30% of 4H ATR) and round numbers (00/50). |
+| H9/H10 | Levels in categories A value (monthly + weekly), B structure (Daily + 4H swings), C volume structure (Fixed VPs, HVN/LVN), D Fib, E gaps/round numbers, clustered into zones ≤ 0.6× 4H ATR wide. A zone must contain A, B or C: Fib/gaps/round numbers alone never make a zone. 3+ categories = A-quality. |
+| H11 | Zone 1 = most categories, then nearest, on the Daily side of price (below for LONG, above for SHORT), within 1.5× Daily ATR. Zone 2 only if clearly separate. |
+| H12 | Invalidation = 4H swing just beyond the zone (within 1× 4H ATR) or the zone edge, + 0.1× 4H ATR. |
+| H13 | First obstacle beyond the zone: value levels, swings, Fixed VP levels, HVN/LVN, gaps, Fib 1.272/1.618 extensions. R measured from the zone middle; under 2R → DOWNGRADE/SKIP. |
+| H14 | 4H sentence in the table and alerts. |
+
+Alerts: **price trades into Zone 1 or Zone 2 → "open the 15M"** (real time, once per bar). This replaces manually placed zone alerts.
+Zones are computed on the latest bar from completed candles, so this script is a planning tool: it has no history of past zones to backtest yet.
 
 ---
 

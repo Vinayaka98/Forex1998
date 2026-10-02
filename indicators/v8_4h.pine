@@ -1,0 +1,681 @@
+//@version=6
+// Trading System v8, Part III: 4H zone building (steps H0-H14), mechanized.
+// The 4H never enters and never reverses the Daily bias. It answers one question:
+// WHERE would I be willing to trade the Daily idea? Output: Zone 1 (+ optional Zone 2)
+// with evidence categories, invalidation, first target, R estimate, the 4H sentence,
+// and an alert when price reaches a zone (= open the 15M). Use on a 4H chart.
+indicator("v8 4H Zones", shorttitle = "v8 4H", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 100, max_bars_back = 1000)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Inputs
+// ─────────────────────────────────────────────────────────────────────────────
+const string G_D   = "H0 Daily bias (same rules as v8 Daily)"
+const string G_STR = "H1-H3 4H structure and HMAs"
+const string G_VP  = "H4-H6 Volume profiles"
+const string G_Z   = "H9-H13 Zones"
+const string G_OUT = "Display & alerts"
+
+dSwingLen  = input.int(5, "Daily swing strength", minval = 2, group = G_D)
+dMinRevAtr = input.float(1.5, "Daily meaningful swing (× Daily ATR)", minval = 0, step = 0.1, group = G_D)
+hmaSlowLen = input.int(200, "HMA slow", minval = 10, group = G_D)
+hmaFastLen = input.int(55, "HMA fast", minval = 5, group = G_D)
+slopeBars  = input.int(5, "HMA slope lookback (bars)", minval = 1, group = G_D)
+flatAtr    = input.float(0.05, "HMA flat if slope < ATR ×", minval = 0, step = 0.01, group = G_D)
+crossLook  = input.int(20, "Daily crossing window (days)", minval = 5, group = G_D)
+crossMax   = input.int(2, "Daily 'crossing repeatedly' = N crosses", minval = 1, group = G_D)
+atrLen     = input.int(14, "ATR length (RMA)", minval = 1, group = G_D)
+
+swingLen   = input.int(5, "4H swing strength", minval = 2, group = G_STR)
+minRevAtr  = input.float(1.5, "4H meaningful swing (× 4H ATR)", minval = 0, step = 0.1, group = G_STR)
+
+ltfTf      = input.timeframe("60", "Intraday data used for profiles", group = G_VP)
+vpRows     = input.int(100, "Profile rows", minval = 20, maxval = 300, group = G_VP)
+vaPct      = input.float(70, "Value area %", minval = 50, maxval = 95, group = G_VP)
+vrvp4hDays = input.int(28, "4H VRVP stand-in window (calendar days)", minval = 7, group = G_VP, tooltip = "The manual says start with ~4 weeks visible on the 4H.")
+vrvpDDays  = input.int(120, "Daily VRVP stand-in window (calendar days)", minval = 30, group = G_VP, tooltip = "~4 months, same as the Daily script.")
+storeDays  = input.int(200, "Intraday history kept (calendar days)", minval = 60, maxval = 600, group = G_VP)
+
+clusterAtr = input.float(0.6, "Zone: levels within 4H ATR × form one zone", minval = 0.1, step = 0.1, group = G_Z)
+maxDistD   = input.float(1.5, "Only zones within Daily ATR × of price", minval = 0.2, step = 0.1, group = G_Z, tooltip = "Zones further away are not today's business.")
+invBufAtr  = input.float(0.1, "Invalidation buffer beyond structure (× 4H ATR)", minval = 0, step = 0.05, group = G_Z)
+minRR      = input.float(2.0, "Room needed from zone middle to first obstacle (R)", minval = 0.5, step = 0.1, group = G_Z)
+gapMinPct  = input.float(30, "Gaps: min size (% of 4H ATR)", minval = 0, group = G_Z)
+gapMax     = input.int(15, "Gaps: max tracked", minval = 1, maxval = 50, group = G_Z)
+useRound   = input.bool(true, "Round numbers (00 / 50) as category E", group = G_Z)
+
+showLevels = input.bool(false, "Draw every candidate level", group = G_OUT)
+showSwings = input.bool(true, "Label 4H swings", group = G_OUT)
+showTable  = input.bool(true, "4H table", group = G_OUT)
+alertTouch = input.bool(true, "Alert: price reached Zone 1 / Zone 2 (open the 15M)", group = G_OUT)
+alertPlan  = input.bool(false, "Alert: 4H sentence at every 4H close", group = G_OUT)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Shared helpers (identical logic to v8 Daily)
+// ─────────────────────────────────────────────────────────────────────────────
+float pip = syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1)
+f_px(float p) => na(p) ? "n/a" : str.tostring(p, format.mintick)
+
+// Alternating zigzag of meaningful swings. `t` holds the swing candle's open time.
+f_swing(array<float> p, array<int> t, array<bool> h, float price, int tm, bool hi, float minMove) =>
+    int n = p.size()
+    if n == 0
+        p.push(price)
+        t.push(tm)
+        h.push(hi)
+    else if h.last() == hi
+        if hi ? price > p.last() : price < p.last()
+            p.set(n - 1, price)
+            t.set(n - 1, tm)
+    else if math.abs(price - p.last()) >= minMove
+        p.push(price)
+        t.push(tm)
+        h.push(hi)
+    p.size()
+
+f_lastTwo(array<float> p, array<bool> h, bool hi) =>
+    float a = na
+    float b = na
+    int n = p.size()
+    if n > 0
+        for i = n - 1 to 0
+            if h.get(i) == hi
+                if na(a)
+                    a := p.get(i)
+                else
+                    b := p.get(i)
+                    break
+    [a, b]
+
+// Most recent completed swing-to-swing impulse in direction `pref` (0 = either) that broke the prior swing
+f_impulse(array<float> p, array<int> t, array<bool> h, int pref) =>
+    float sp = na
+    float ep = na
+    int   st = na
+    int   et = na
+    int   dir = 0
+    int n = p.size()
+    if n >= 3
+        for i = n - 1 to 2
+            int d = h.get(i) ? 1 : -1
+            if pref == 0 or pref == d
+                bool broke = d == 1 ? p.get(i) > p.get(i - 2) : p.get(i) < p.get(i - 2)
+                if broke
+                    sp  := p.get(i - 1)
+                    st  := t.get(i - 1)
+                    ep  := p.get(i)
+                    et  := t.get(i)
+                    dir := d
+                    break
+    if dir == 0 and n >= 2
+        for i = n - 1 to 1
+            int d = h.get(i) ? 1 : -1
+            if pref == 0 or pref == d
+                sp  := p.get(i - 1)
+                st  := t.get(i - 1)
+                ep  := p.get(i)
+                et  := t.get(i)
+                dir := d
+                break
+    [sp, st, ep, et, dir]
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H0: Daily bias and Daily structure, computed on Daily candles (completed days only)
+// ─────────────────────────────────────────────────────────────────────────────
+f_daily() =>
+    float atrD = ta.atr(atrLen)
+    float hSd  = ta.hma(close, hmaSlowLen)
+    float sSl  = hSd - hSd[slopeBars]
+    int   sDd  = sSl > flatAtr * atrD ? 1 : sSl < -flatAtr * atrD ? -1 : 0
+    int   crN  = int(math.sum(ta.cross(close, hSd) ? 1 : 0, crossLook))
+    int   sdD  = close > hSd ? 1 : close < hSd ? -1 : 0
+    var array<float> dp = array.new<float>()
+    var array<int>   dt = array.new<int>()
+    var array<bool>  dh = array.new<bool>()
+    float phD = ta.pivothigh(high, dSwingLen, dSwingLen)
+    float plD = ta.pivotlow(low, dSwingLen, dSwingLen)
+    float mm  = dMinRevAtr * nz(atrD[dSwingLen], nz(atrD))
+    if not na(plD)
+        f_swing(dp, dt, dh, plD, time[dSwingLen], false, mm)
+    if not na(phD)
+        f_swing(dp, dt, dh, phD, time[dSwingLen], true, mm)
+    while dp.size() > 60
+        dp.shift()
+        dt.shift()
+        dh.shift()
+    [lH, pH] = f_lastTwo(dp, dh, true)
+    [lL, pL] = f_lastTwo(dp, dh, false)
+    int stD = 0
+    if not na(pH) and not na(pL)
+        bool hh = lH > pH
+        bool hl = lL > pL
+        stD := hh and hl ? 1 : not hh and not hl ? -1 : 0
+        if stD == 1 and close < lL
+            stD := 0
+        if stD == -1 and close > lH
+            stD := 0
+    int b = stD == 1 and sdD == 1 and sDd == 1 and crN < crossMax ? 1 : stD == -1 and sdD == -1 and sDd == -1 and crN < crossMax ? -1 : 0
+    [isp, ist, iep, iet, idir] = f_impulse(dp, dt, dh, b)
+    [b[1], stD[1], sdD[1], sDd[1], crN[1], lH[1], pH[1], lL[1], pL[1], isp[1], ist[1], iep[1], iet[1], idir[1], atrD[1]]
+
+[dBias, dStruct, dSide, dSlope, dCross, dLH, dPH, dLL, dPL, dIsp, dIst, dIep, dIet, dIdir, dAtr] = request.security(syminfo.tickerid, "D", f_daily(), lookahead = barmerge.lookahead_on)
+
+string dBiasTxt = dBias == 1 ? "LONG" : dBias == -1 ? "SHORT" : "NEUTRAL"
+string dWhy     = dStruct == 0 ? "Daily structure mixed/broken" : dCross >= crossMax ? "price keeps crossing Daily HMA200" : dSlope == 0 ? "Daily HMA200 flat" : "Daily structure and HMA200 disagree"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H1-H3: 4H structure, 4H HMA 200 / 55
+// ─────────────────────────────────────────────────────────────────────────────
+float atr4 = ta.atr(atrLen)
+float hS4  = ta.hma(close, hmaSlowLen)
+float hF4  = ta.hma(close, hmaFastLen)
+int   s4   = hS4 - hS4[slopeBars] > flatAtr * atr4 ? 1 : hS4 - hS4[slopeBars] < -flatAtr * atr4 ? -1 : 0
+int   f4   = hF4 - hF4[slopeBars] > flatAtr * atr4 ? 1 : hF4 - hF4[slopeBars] < -flatAtr * atr4 ? -1 : 0
+int   side4 = close > hS4 ? 1 : -1
+
+var array<float> swP  = array.new<float>()
+var array<int>   swT  = array.new<int>()
+var array<bool>  swHi = array.new<bool>()
+float ph4 = ta.pivothigh(high, swingLen, swingLen)
+float pl4 = ta.pivotlow(low, swingLen, swingLen)
+float mm4 = minRevAtr * nz(atr4[swingLen], nz(atr4))
+if not na(pl4)
+    f_swing(swP, swT, swHi, pl4, time[swingLen], false, mm4)
+if not na(ph4)
+    f_swing(swP, swT, swHi, ph4, time[swingLen], true, mm4)
+while swP.size() > 60
+    swP.shift()
+    swT.shift()
+    swHi.shift()
+[l4H, p4H] = f_lastTwo(swP, swHi, true)
+[l4L, p4L] = f_lastTwo(swP, swHi, false)
+string st4Txt = na(p4H) or na(p4L) ? "not enough swings" : l4H > p4H and l4L > p4L ? "bullish (HH + HL)" : l4H < p4H and l4L < p4L ? "bearish (LH + LL)" : "mixed"
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Intraday store for profiles (time based, so Daily and 4H anchors both work)
+// ─────────────────────────────────────────────────────────────────────────────
+[ih, il, iv, it] = request.security_lower_tf(syminfo.tickerid, ltfTf, [high, low, volume, time])
+var array<float> stH = array.new<float>()
+var array<float> stL = array.new<float>()
+var array<float> stV = array.new<float>()
+var array<int>   stT = array.new<int>()
+int nIn = ih.size()
+if nIn > 0
+    for i = 0 to nIn - 1
+        float v = iv.get(i)
+        stH.push(ih.get(i))
+        stL.push(il.get(i))
+        stV.push(na(v) or v <= 0 ? 1.0 : v)
+        stT.push(it.get(i))
+while stT.size() > 0 and stT.first() < time - storeDays * 86400000
+    stH.shift()
+    stL.shift()
+    stV.shift()
+    stT.shift()
+
+// Volume profile of intraday candles with t0 <= open time < t1
+f_profile(int t0, int t1) =>
+    float poc  = na
+    float vah  = na
+    float val  = na
+    float top  = na
+    float bot  = na
+    float step = na
+    array<float> rows = array.new<float>(vpRows, 0.0)
+    int n = stT.size()
+    if n > 0 and not na(t0) and not na(t1)
+        for i = 0 to n - 1
+            int d = stT.get(i)
+            if d >= t0 and d < t1
+                top := na(top) ? stH.get(i) : math.max(top, stH.get(i))
+                bot := na(bot) ? stL.get(i) : math.min(bot, stL.get(i))
+        if not na(top) and top > bot
+            step := (top - bot) / vpRows
+            for i = 0 to n - 1
+                int d = stT.get(i)
+                if d >= t0 and d < t1
+                    int a = math.max(0, math.min(vpRows - 1, math.floor((stL.get(i) - bot) / step)))
+                    int c = math.max(0, math.min(vpRows - 1, math.floor((stH.get(i) - bot) / step)))
+                    float share = stV.get(i) / (c - a + 1)
+                    for r = a to c
+                        rows.set(r, rows.get(r) + share)
+            int   pr   = rows.indexof(rows.max())
+            float goal = rows.sum() * vaPct / 100
+            float acc  = rows.get(pr)
+            int up = pr
+            int dn = pr
+            while acc < goal and (up < vpRows - 1 or dn > 0)
+                float nu = up < vpRows - 1 ? rows.get(up + 1) : -1.0
+                float nd = dn > 0 ? rows.get(dn - 1) : -1.0
+                if nu >= nd
+                    up  += 1
+                    acc += nu
+                else
+                    dn  -= 1
+                    acc += nd
+            poc := bot + (pr + 0.5) * step
+            vah := bot + (up + 1) * step
+            val := bot + dn * step
+    [poc, vah, val, rows, bot, step]
+
+f_nodes(array<float> rows, float bot, float step, float price) =>
+    float hvnUp = na
+    float hvnDn = na
+    float lvnUp = na
+    float lvnDn = na
+    int n = rows.size()
+    if n > 8 and not na(step)
+        array<float> sm = array.new<float>(n, 0.0)
+        for i = 0 to n - 1
+            float s = 0.0
+            int c = 0
+            for j = math.max(0, i - 2) to math.min(n - 1, i + 2)
+                s += rows.get(j)
+                c += 1
+            sm.set(i, s / c)
+        float mean = sm.avg()
+        for i = 3 to n - 4
+            float v = sm.get(i)
+            bool isMax = true
+            bool isMin = true
+            for j = i - 3 to i + 3
+                if j != i
+                    if sm.get(j) > v
+                        isMax := false
+                    if sm.get(j) < v
+                        isMin := false
+            float px = bot + (i + 0.5) * step
+            if isMax and v >= 1.2 * mean
+                if px > price and (na(hvnUp) or px < hvnUp)
+                    hvnUp := px
+                if px < price and (na(hvnDn) or px > hvnDn)
+                    hvnDn := px
+            if isMin and v <= 0.6 * mean
+                if px > price and (na(lvnUp) or px < lvnUp)
+                    lvnUp := px
+                if px < price and (na(lvnDn) or px > lvnDn)
+                    lvnDn := px
+    [hvnUp, hvnDn, lvnUp, lvnDn]
+
+var int wT  = na
+var int pwT = na
+var int mT  = na
+var int pmT = na
+if timeframe.change("W")
+    pwT := wT
+    wT  := time
+if timeframe.change("M")
+    pmT := mT
+    mT  := time
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H8: 4H gaps (removed only when completely filled)
+// ─────────────────────────────────────────────────────────────────────────────
+var array<float> gTop = array.new<float>()
+var array<float> gBot = array.new<float>()
+var array<int>   gBar = array.new<int>()
+int gn = gTop.size()
+if gn > 0
+    for i = gn - 1 to 0
+        if low <= gBot.get(i) and high >= gTop.get(i)
+            gTop.remove(i)
+            gBot.remove(i)
+            gBar.remove(i)
+float gMin = gapMinPct / 100 * nz(atr4[1])
+if low > high[1] and low - high[1] >= gMin
+    gTop.push(low)
+    gBot.push(high[1])
+    gBar.push(bar_index)
+else if high < low[1] and low[1] - high >= gMin
+    gTop.push(low[1])
+    gBot.push(high)
+    gBar.push(bar_index)
+while gTop.size() > gapMax
+    gTop.shift()
+    gBot.shift()
+    gBar.shift()
+
+// ─────────────────────────────────────────────────────────────────────────────
+// H4: weekly behaviour in the Daily direction
+// ─────────────────────────────────────────────────────────────────────────────
+f_wState(int b, float vah, float val, float poc, int o) =>
+    string s = "n/a"
+    if not na(vah)
+        float c0 = close[o]
+        float c1 = close[o + 1]
+        float lo3 = math.min(low[o], low[o + 1], low[o + 2])
+        float hi3 = math.max(high[o], high[o + 1], high[o + 2])
+        int pocX = 0
+        for j = o to o + 5
+            if (close[j] - poc) * (close[j + 1] - poc) < 0
+                pocX += 1
+        s := pocX >= 3 ? "chopping around wPOC: do not build an entry just because POC exists" : b == 1 and lo3 <= val and c0 > val ? "pulled to wVAL and reclaimed: possible long location" : b == 1 and c0 > vah and c1 > vah ? "accepted above wVAH: breakout-retest long possible, needs 15M later" : b == -1 and hi3 >= vah and c0 < vah ? "rallied to wVAH and rejected: possible short location" : b == -1 and c0 < val and c1 < val ? "accepted below wVAL: breakdown-retest short possible, needs 15M later" : c0 > vah ? "above wVAH" : c0 < val ? "below wVAL" : "inside weekly value"
+    s
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Build zones on the last bar (completed 4H candles only)
+// ─────────────────────────────────────────────────────────────────────────────
+int off = barstate.isconfirmed ? 0 : 1
+
+var array<line>  zLines = array.new<line>()
+var array<label> zLabs  = array.new<label>()
+var array<box>   zBoxes = array.new<box>()
+var table tb = table.new(position.top_right, 2, 15, bgcolor = color.new(color.black, 20), border_width = 1)
+
+f_row(int r, string k, string v, color c) =>
+    table.cell(tb, 0, r, k, text_color = color.silver, text_size = size.small, text_halign = text.align_left)
+    table.cell(tb, 1, r, v, text_color = c, text_size = size.small, text_halign = text.align_left)
+
+f_add(array<float> p, array<string> c, array<string> n, float v, string cat, string name) =>
+    if not na(v)
+        p.push(v)
+        c.push(cat)
+        n.push(name)
+
+// H12 invalidation (structure beyond the zone + buffer) and H13 first obstacle in the trade direction
+f_plan(int bias, float lo, float hi, float price, float a4, array<float> tgP, array<string> tgN) =>
+    float mid = (lo + hi) / 2
+    float inv = bias == 1 ? lo : hi
+    int n = swP.size()
+    if n > 0
+        for i = 0 to n - 1
+            float sp = swP.get(i)
+            if bias == 1 and not swHi.get(i) and sp < lo and sp >= lo - a4 and sp < inv
+                inv := sp
+            if bias == -1 and swHi.get(i) and sp > hi and sp <= hi + a4 and sp > inv
+                inv := sp
+    inv := inv - bias * invBufAtr * a4
+    float tg = na
+    string tgName = "none"
+    int tn = tgP.size()
+    if tn > 0
+        for i = 0 to tn - 1
+            float v = tgP.get(i)
+            bool beyond = bias == 1 ? v > math.max(hi, price) : v < math.min(lo, price)
+            if beyond and (na(tg) or (bias == 1 ? v < tg : v > tg))
+                tg := v
+                tgName := tgN.get(i)
+    float rr = na(tg) ? na : bias * (tg - mid) / math.abs(mid - inv)
+    [inv, tg, tgName, rr]
+
+// Zone 1 / Zone 2 kept between bars so the touch alert uses the plan made before price arrived
+var float z1Lo = na
+var float z1Hi = na
+var float z2Lo = na
+var float z2Hi = na
+var string z1Txt = ""
+var string z2Txt = ""
+string sentence = ""
+
+if barstate.islast
+    float price = close[off]
+    float a4    = atr4[off]
+    int   tNow  = time_close[off]
+
+    // H4-H7 + transferred Daily levels (H0)
+    [mPoc, mVah, mVal, r1, b1, s1]   = f_profile(mT, tNow)
+    [pmPoc, pmVah, pmVal, r2, b2, s2] = f_profile(pmT, mT)
+    [wPoc, wVah, wVal, r3, b3, s3]   = f_profile(wT, tNow)
+    [pwPoc, pwVah, pwVal, r4, b4, s4p] = f_profile(pwT, wT)
+    [dvPoc, dvVah, dvVal, dRows, dBot, dStep] = f_profile(tNow - vrvpDDays * 86400000, tNow)
+    [dHvU, dHvD, dLvU, dLvD]         = f_nodes(dRows, dBot, dStep, price)
+    [vPoc, vVah, vVal, vRows, vBot, vStep] = f_profile(tNow - vrvp4hDays * 86400000, tNow)
+    [hvU, hvD, lvU, lvD]             = f_nodes(vRows, vBot, vStep, price)
+    [dfPoc, dfVah, dfVal, r5, b5, s5] = f_profile(dIst, na(dIet) ? na : dIet + 86400000)
+    [isp, ist, iep, iet, idir]       = f_impulse(swP, swT, swHi, dBias)
+    [fPoc, fVah, fVal, r6, b6, s6]   = f_profile(ist, na(iet) ? na : iet + 4 * 3600000)
+    string wState = f_wState(dBias, wVah, wVal, wPoc, off)
+
+    // H2 / H3: how much evidence the zone needs
+    bool strongAlign = dBias != 0 and side4[off] == dBias and s4[off] == dBias
+    bool bothAgainst = dBias != 0 and s4[off] == -dBias and f4[off] == -dBias
+    int  minCats     = strongAlign ? 2 : 3
+    string h2Txt = dBias == 0 ? "n/a (Daily NEUTRAL)" : strongAlign ? "4H " + (dBias == 1 ? "above rising" : "below falling") + " HMA200: strong alignment, continuation pullbacks, 2+ categories" : "4H not aligned with Daily: deeper correction, zone needs 3+ categories and a stronger 15M confirmation"
+    string h3Txt = bothAgainst ? "both 4H HMAs against the Daily: do not rush, the Daily idea may need time" : f4[off] == dBias ? "HMA55 with the Daily: continuation environment" : f4[off] == -dBias ? "HMA55 against the Daily: possible pullback" : "HMA55 flat"
+
+    // Fib on the Daily impulse and on the 4H impulse
+    float dfr = dIep - dIsp
+    float fr4 = iep - isp
+
+    // H9: every candidate level with its evidence category
+    array<float>  lvP = array.new<float>()
+    array<string> lvC = array.new<string>()
+    array<string> lvN = array.new<string>()
+    f_add(lvP, lvC, lvN, mVah, "A", "mVAH")
+    f_add(lvP, lvC, lvN, mPoc, "A", "mPOC")
+    f_add(lvP, lvC, lvN, mVal, "A", "mVAL")
+    f_add(lvP, lvC, lvN, pmVah, "A", "prev mVAH")
+    f_add(lvP, lvC, lvN, pmPoc, "A", "prev mPOC")
+    f_add(lvP, lvC, lvN, pmVal, "A", "prev mVAL")
+    f_add(lvP, lvC, lvN, wVah, "A", "wVAH")
+    f_add(lvP, lvC, lvN, wPoc, "A", "wPOC")
+    f_add(lvP, lvC, lvN, wVal, "A", "wVAL")
+    f_add(lvP, lvC, lvN, pwVah, "A", "prev wVAH")
+    f_add(lvP, lvC, lvN, pwPoc, "A", "prev wPOC")
+    f_add(lvP, lvC, lvN, pwVal, "A", "prev wVAL")
+    f_add(lvP, lvC, lvN, dLH, "B", "Daily swing high")
+    f_add(lvP, lvC, lvN, dPH, "B", "Daily swing high")
+    f_add(lvP, lvC, lvN, dLL, "B", "Daily swing low")
+    f_add(lvP, lvC, lvN, dPL, "B", "Daily swing low")
+    int sn = swP.size()
+    if sn > 0
+        for i = math.max(0, sn - 6) to sn - 1
+            f_add(lvP, lvC, lvN, swP.get(i), "B", swHi.get(i) ? "4H swing high" : "4H swing low")
+    f_add(lvP, lvC, lvN, dfPoc, "C", "Daily Fixed VP POC")
+    f_add(lvP, lvC, lvN, dfVah, "C", "Daily Fixed VP VAH")
+    f_add(lvP, lvC, lvN, dfVal, "C", "Daily Fixed VP VAL")
+    f_add(lvP, lvC, lvN, dHvU, "C", "Daily HVN")
+    f_add(lvP, lvC, lvN, dHvD, "C", "Daily HVN")
+    f_add(lvP, lvC, lvN, dLvU, "C", "Daily LVN")
+    f_add(lvP, lvC, lvN, dLvD, "C", "Daily LVN")
+    f_add(lvP, lvC, lvN, fPoc, "C", "4H Fixed VP POC")
+    f_add(lvP, lvC, lvN, fVah, "C", "4H Fixed VP VAH")
+    f_add(lvP, lvC, lvN, fVal, "C", "4H Fixed VP VAL")
+    f_add(lvP, lvC, lvN, hvU, "C", "4H HVN")
+    f_add(lvP, lvC, lvN, hvD, "C", "4H HVN")
+    f_add(lvP, lvC, lvN, lvU, "C", "4H LVN")
+    f_add(lvP, lvC, lvN, lvD, "C", "4H LVN")
+    if not na(dfr)
+        f_add(lvP, lvC, lvN, dIep - 0.382 * dfr, "D", "Daily Fib 38.2")
+        f_add(lvP, lvC, lvN, dIep - 0.5 * dfr, "D", "Daily Fib 50")
+        f_add(lvP, lvC, lvN, dIep - 0.618 * dfr, "D", "Daily Fib 61.8")
+        f_add(lvP, lvC, lvN, dIep - 0.786 * dfr, "D", "Daily Fib 78.6")
+    if not na(fr4)
+        f_add(lvP, lvC, lvN, iep - 0.382 * fr4, "D", "4H Fib 38.2")
+        f_add(lvP, lvC, lvN, iep - 0.5 * fr4, "D", "4H Fib 50")
+        f_add(lvP, lvC, lvN, iep - 0.618 * fr4, "D", "4H Fib 61.8")
+        f_add(lvP, lvC, lvN, iep - 0.786 * fr4, "D", "4H Fib 78.6")
+    int gc = gTop.size()
+    if gc > 0
+        for i = 0 to gc - 1
+            f_add(lvP, lvC, lvN, gTop.get(i), "E", "gap edge")
+            f_add(lvP, lvC, lvN, gBot.get(i), "E", "gap edge")
+    if useRound
+        float rStep = 50 * pip
+        float rBase = math.floor(price / rStep) * rStep
+        for k = -4 to 5
+            float rv = rBase + k * rStep
+            f_add(lvP, lvC, lvN, rv, "E", math.abs(rv / (100 * pip) - math.round(rv / (100 * pip))) < 0.01 ? "round 00" : "round 50")
+
+    // Targets (H13): obstacles that can stop the move. Fib retracements and round numbers are not targets.
+    array<float>  tgP = array.new<float>()
+    array<string> tgN = array.new<string>()
+    int lc = lvP.size()
+    if lc > 0
+        for i = 0 to lc - 1
+            if lvC.get(i) != "D" and not str.startswith(lvN.get(i), "round")
+                tgP.push(lvP.get(i))
+                tgN.push(lvN.get(i))
+    if not na(fr4)
+        tgP.push(isp + 1.272 * fr4)
+        tgN.push("4H Fib ext 1.272")
+        tgP.push(isp + 1.618 * fr4)
+        tgN.push("4H Fib ext 1.618")
+
+    // H10: cluster sorted levels into zones no wider than clusterAtr × 4H ATR
+    array<float>  zLo  = array.new<float>()
+    array<float>  zHi  = array.new<float>()
+    array<string> zCat = array.new<string>()
+    array<string> zNm  = array.new<string>()
+    if lc > 0
+        array<int> idx = lvP.sort_indices(order.ascending)
+        float rad = clusterAtr * a4
+        for k = 0 to lc - 1
+            int    i  = idx.get(k)
+            float  v  = lvP.get(i)
+            string ct = lvC.get(i)
+            string nm = lvN.get(i)
+            if zLo.size() == 0 or v - zLo.last() > rad
+                zLo.push(v)
+                zHi.push(v)
+                zCat.push(ct)
+                zNm.push(nm)
+            else
+                int z = zLo.size() - 1
+                zHi.set(z, v)
+                if not str.contains(zCat.get(z), ct)
+                    zCat.set(z, zCat.get(z) + ct)
+                if not str.contains(zNm.get(z), nm)
+                    zNm.set(z, zNm.get(z) + " + " + nm)
+
+    // H11: Zone 1 / Zone 2 on the Daily side of price.
+    // Qualifies with >= minCats categories, at least one of A/B/C (gaps / round numbers / Fib alone never make a zone),
+    // and within maxDistD Daily ATR. Best = most categories, then nearest.
+    int best1 = na
+    int best2 = na
+    int zc = zLo.size()
+    if dBias != 0 and zc > 0
+        for z = 0 to zc - 1
+            string cats = zCat.get(z)
+            int nc = str.length(cats)
+            bool core = str.contains(cats, "A") or str.contains(cats, "B") or str.contains(cats, "C")
+            float mid = (zLo.get(z) + zHi.get(z)) / 2
+            bool sideOk = dBias == 1 ? zLo.get(z) <= price : zHi.get(z) >= price
+            bool near = math.abs(mid - price) <= maxDistD * dAtr
+            if nc >= minCats and core and sideOk and near
+                if na(best1)
+                    best1 := z
+                else
+                    int n1 = str.length(zCat.get(best1))
+                    float m1 = (zLo.get(best1) + zHi.get(best1)) / 2
+                    if nc > n1 or (nc == n1 and math.abs(mid - price) < math.abs(m1 - price))
+                        best1 := z
+        if not na(best1)
+            for z = 0 to zc - 1
+                if z != best1
+                    string cats = zCat.get(z)
+                    int nc = str.length(cats)
+                    bool core = str.contains(cats, "A") or str.contains(cats, "B") or str.contains(cats, "C")
+                    float mid = (zLo.get(z) + zHi.get(z)) / 2
+                    bool sideOk = dBias == 1 ? zLo.get(z) <= price : zHi.get(z) >= price
+                    bool near = math.abs(mid - price) <= maxDistD * dAtr
+                    bool apart = zLo.get(z) > zHi.get(best1) + 0.5 * a4 or zHi.get(z) < zLo.get(best1) - 0.5 * a4
+                    if nc >= minCats and core and sideOk and near and apart
+                        if na(best2)
+                            best2 := z
+                        else
+                            int n2 = str.length(zCat.get(best2))
+                            float m2 = (zLo.get(best2) + zHi.get(best2)) / 2
+                            if nc > n2 or (nc == n2 and math.abs(mid - price) < math.abs(m2 - price))
+                                best2 := z
+
+    string side = dBias == 1 ? "LONG" : "SHORT"
+    float i1 = na
+    float t1 = na
+    float rr1 = na
+    string tn1 = ""
+    float i2 = na
+    float t2 = na
+    float rr2 = na
+    string tn2 = ""
+    if not na(best1)
+        [a, b, c, d] = f_plan(dBias, zLo.get(best1), zHi.get(best1), price, a4, tgP, tgN)
+        i1 := a
+        t1 := b
+        tn1 := c
+        rr1 := d
+    if not na(best2)
+        [a, b, c, d] = f_plan(dBias, zLo.get(best2), zHi.get(best2), price, a4, tgP, tgN)
+        i2 := a
+        t2 := b
+        tn2 := c
+        rr2 := d
+
+    z1Lo := na(best1) ? na : zLo.get(best1)
+    z1Hi := na(best1) ? na : zHi.get(best1)
+    z2Lo := na(best2) ? na : zLo.get(best2)
+    z2Hi := na(best2) ? na : zHi.get(best2)
+    z1Txt := na(best1) ? "" : f_px(z1Lo) + "-" + f_px(z1Hi) + " [" + zCat.get(best1) + (str.length(zCat.get(best1)) >= 3 ? " A-quality" : "") + "] " + zNm.get(best1)
+    z2Txt := na(best2) ? "" : f_px(z2Lo) + "-" + f_px(z2Hi) + " [" + zCat.get(best2) + (str.length(zCat.get(best2)) >= 3 ? " A-quality" : "") + "] " + zNm.get(best2)
+    string p1 = na(best1) ? "" : "invalid beyond " + f_px(i1) + " · first target " + f_px(t1) + " (" + tn1 + ") · ~" + str.tostring(rr1, "#.0") + "R from zone middle" + (na(rr1) or rr1 < minRR ? " · DOWNGRADE/SKIP: under " + str.tostring(minRR) + "R of room" : "")
+    string p2 = na(best2) ? "" : "invalid beyond " + f_px(i2) + " · first target " + f_px(t2) + " (" + tn2 + ") · ~" + str.tostring(rr2, "#.0") + "R from zone middle" + (na(rr2) or rr2 < minRR ? " · DOWNGRADE/SKIP: under " + str.tostring(minRR) + "R of room" : "")
+
+    // H14 sentence
+    sentence := dBias == 0 ? "Daily is NEUTRAL (" + dWhy + "): stand down, no zones." : na(best1) ? "Daily says " + side + " but no zone within reach has " + str.tostring(minCats) + "+ independent categories: wait." : "I will look for a " + side + " only in Zone " + f_px(z1Lo) + " to " + f_px(z1Hi) + " because it contains " + zNm.get(best1) + ". I am wrong if price closes beyond " + f_px(i1) + ". My first major target area is " + f_px(t1) + " because it is the " + tn1 + "."
+
+    // Drawings
+    for l in zLines
+        l.delete()
+    for lb in zLabs
+        lb.delete()
+    for bx in zBoxes
+        bx.delete()
+    zLines.clear()
+    zLabs.clear()
+    zBoxes.clear()
+    color sc = dBias == 1 ? color.teal : color.maroon
+    if not na(best1)
+        zBoxes.push(box.new(bar_index - 30, z1Hi, bar_index + 12, z1Lo, border_color = sc, border_width = 2, bgcolor = color.new(sc, 75), text = "ZONE 1 " + side + " [" + zCat.get(best1) + "]", text_size = size.small, text_color = color.white, text_halign = text.align_right))
+        zLines.push(line.new(bar_index - 30, i1, bar_index + 12, i1, color = color.red, style = line.style_dashed))
+        zLabs.push(label.new(bar_index + 12, i1, "Z1 invalid " + f_px(i1), style = label.style_label_left, color = color.new(color.red, 85), textcolor = color.red, size = size.tiny))
+        if not na(t1)
+            zLines.push(line.new(bar_index - 30, t1, bar_index + 12, t1, color = color.green, style = line.style_dashed))
+            zLabs.push(label.new(bar_index + 12, t1, "Z1 target " + f_px(t1) + " ~" + str.tostring(rr1, "#.0") + "R", style = label.style_label_left, color = color.new(color.green, 85), textcolor = color.green, size = size.tiny))
+    if not na(best2)
+        zBoxes.push(box.new(bar_index - 30, z2Hi, bar_index + 12, z2Lo, border_color = sc, bgcolor = color.new(sc, 88), text = "ZONE 2 " + side + " [" + zCat.get(best2) + "]", text_size = size.small, text_color = sc, text_halign = text.align_right))
+        zLines.push(line.new(bar_index - 30, i2, bar_index + 12, i2, color = color.new(color.red, 40), style = line.style_dotted))
+    if showLevels and lc > 0
+        for i = 0 to lc - 1
+            string ct = lvC.get(i)
+            color c = ct == "A" ? color.purple : ct == "B" ? color.orange : ct == "C" ? color.blue : ct == "D" ? color.green : color.fuchsia
+            zLines.push(line.new(bar_index - 15, lvP.get(i), bar_index + 5, lvP.get(i), color = color.new(c, 40)))
+            zLabs.push(label.new(bar_index + 5, lvP.get(i), ct + " " + lvN.get(i), style = label.style_label_left, color = color.new(c, 92), textcolor = c, size = size.tiny))
+    if showSwings and sn > 1
+        for i = math.max(2, sn - 10) to sn - 1
+            bool hi = swHi.get(i)
+            string tag = hi ? (swP.get(i) > swP.get(i - 2) ? "HH" : "LH") : (swP.get(i) > swP.get(i - 2) ? "HL" : "LL")
+            zLabs.push(label.new(swT.get(i), swP.get(i), tag, xloc = xloc.bar_time, style = hi ? label.style_label_down : label.style_label_up, color = color.new(color.gray, 70), textcolor = color.white, size = size.tiny))
+    if showTable
+        color bc = dBias == 1 ? color.lime : dBias == -1 ? color.red : color.yellow
+        f_row(0, "Daily bias", dBiasTxt + (dBias == 0 ? " · " + dWhy + " · stand down" : ""), bc)
+        f_row(1, "4H structure", st4Txt[off] + (dBias == 1 and str.startswith(st4Txt[off], "bearish") ? " (pullback inside Daily LONG)" : dBias == -1 and str.startswith(st4Txt[off], "bullish") ? " (bounce inside Daily SHORT)" : ""), color.white)
+        f_row(2, "H2 4H HMA200", h2Txt, strongAlign ? color.lime : color.orange)
+        f_row(3, "H3 4H HMA55", h3Txt, bothAgainst ? color.orange : color.white)
+        f_row(4, "H4 Weekly value", "VAH " + f_px(wVah) + " · POC " + f_px(wPoc) + " · VAL " + f_px(wVal) + " · " + wState, color.white)
+        f_row(5, "Monthly value", "VAH " + f_px(mVah) + " · POC " + f_px(mPoc) + " · VAL " + f_px(mVal), color.silver)
+        f_row(6, "H5 4H VRVP", "HVN ↑ " + f_px(hvU) + " ↓ " + f_px(hvD) + " · LVN ↑ " + f_px(lvU) + " ↓ " + f_px(lvD), color.white)
+        f_row(7, "H6 4H impulse", idir == 0 ? "none" : (idir == 1 ? "up " : "down ") + f_px(isp) + " → " + f_px(iep) + " · Fixed VP POC " + f_px(fPoc) + " VAH " + f_px(fVah) + " VAL " + f_px(fVal), color.white)
+        f_row(8, "H7 4H Fib", na(fr4) ? "n/a" : "38.2 " + f_px(iep - 0.382 * fr4) + " · 50 " + f_px(iep - 0.5 * fr4) + " · 61.8 " + f_px(iep - 0.618 * fr4) + " · 78.6 " + f_px(iep - 0.786 * fr4), color.white)
+        f_row(9, "H8 Gaps", str.tostring(gc) + " open", color.white)
+        f_row(10, "Zone 1", na(best1) ? "none qualifies (needs " + str.tostring(minCats) + "+ categories)" : z1Txt, sc)
+        f_row(11, "Zone 1 plan", p1, na(rr1) or rr1 < minRR ? color.orange : color.white)
+        f_row(12, "Zone 2", na(best2) ? "none" : z2Txt, sc)
+        f_row(13, "Zone 2 plan", p2, na(rr2) or rr2 < minRR ? color.orange : color.white)
+        f_row(14, "4H sentence", sentence, color.white)
+
+// ─────────────────────────────────────────────────────────────────────────────
+// Visuals and alerts
+// ─────────────────────────────────────────────────────────────────────────────
+plot(hS4, "4H HMA 200", s4 == 1 ? color.teal : s4 == -1 ? color.red : color.gray, 2)
+plot(hF4, "4H HMA 55", color.new(color.orange, 0), 1)
+plot(dBias, "Daily bias", display = display.data_window)
+
+// M0: the zone alert is the only reason to open the 15M. Fires as soon as price trades into a zone.
+bool in1 = not na(z1Lo) and low <= z1Hi and high >= z1Lo
+bool in2 = not na(z2Lo) and low <= z2Hi and high >= z2Lo
+if alertTouch and dBias != 0 and barstate.isrealtime
+    if in1
+        alert("[4H] " + syminfo.ticker + " price is in " + (dBias == 1 ? "LONG" : "SHORT") + " ZONE 1 " + z1Txt + "\nOpen the 15M and wait for a trigger. " + sentence, alert.freq_once_per_bar)
+    else if in2
+        alert("[4H] " + syminfo.ticker + " price is in " + (dBias == 1 ? "LONG" : "SHORT") + " ZONE 2 " + z2Txt + "\nOpen the 15M and wait for a trigger.", alert.freq_once_per_bar)
+if alertPlan and barstate.isconfirmed and sentence != ""
+    alert("[4H] " + syminfo.ticker + " plan\n" + sentence, alert.freq_once_per_bar_close)
