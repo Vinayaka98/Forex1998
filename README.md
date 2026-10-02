@@ -1,5 +1,36 @@
 # Forex1998
 
+## Trading System v8 (in progress): Daily → 4H → 15M
+
+Built from the *Trading System v8* execution manual. One script per job, in the manual's order:
+
+| Script | Manual part | Status |
+|---|---|---|
+| `indicators/v8_daily.pine` | Part II, Daily D1–D12: bias + levels, **never entries** | built, not yet compiled |
+| 4H zone builder | Part III, H0–H14 | next |
+| 15M trigger + execution | Part IV, M0–M16 | after 4H |
+
+### v8 Daily (`indicators/v8_daily.pine`), use on a Daily chart
+| Step | Mechanized as |
+|---|---|
+| D1 structure | Zigzag of confirmed pivots (5 bars each side) that moved ≥ 1.5× ATR from the previous opposite swing. HH+HL = bullish, LH+LL = bearish, else mixed. A close through the last HL/LH breaks the structure. |
+| D2 HMA 200 | Price side; slope over 5 days (flat if < 0.05× ATR); "crossing repeatedly" = ≥ 2 crosses in 20 days. |
+| D3 HMA 55 | Alignment / pullback / bounce text. Context only. |
+| D4 bias | LONG = bullish structure + price above rising HMA 200 (not crossing). SHORT = mirror. Everything else NEUTRAL. No manual override. |
+| D5 Monthly PVP | VAH/POC/VAL of this (developing) month and the previous month from 1H data, 100 rows, 70%. State: accepted above VAH, failed breakout, accepted below VAL, failed breakdown, POC chop, inside value. |
+| D6 VRVP | Not reproducible (depends on zoom). Stand-in: fixed 84-day profile; nearest major HVN/LVN above and below. |
+| D7 Fixed VP / D8 Fib | Most recent completed swing-to-swing impulse that broke the prior swing, in the bias direction. Profile + Fib 38.2/50/61.8/78.6 and 1.272/1.618 extensions. Anchors are chosen by rule, so they cannot be moved to fit an idea. |
+| D9 confluence | Levels grouped into zones ≤ 0.3× ATR wide. Categories: A monthly value, B swings, C volume structure (Fixed VP, HVN/LVN), D Fib, E gaps. Nearest zone with ≥ 2 categories below/above price = major support/resistance. |
+| D10 gaps | Daily gaps ≥ 30% of ATR, max 15, removed only when fully filled. |
+| D11 ATR | ATR 14 (RMA) and % of it used today; ≥ 80% flagged as extended. |
+| D12 sentence | Written in the table and sent in alerts. |
+| Bias check | For every LONG/SHORT day: move over the next 5 days in the bias direction (in ATR). Overlapping windows, so indicative only. |
+
+Alerts: bias change at the daily close (and optionally the daily sentence every day). Decisions use the last completed day only.
+
+---
+
+
 ## Level Trader 15m / 4H / D (TradingView, Pine Script v6)
 
 `indicators/level_trader.pine` automates the *NY session checklist v4*
