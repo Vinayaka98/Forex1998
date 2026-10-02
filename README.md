@@ -8,7 +8,7 @@ Built from the *Trading System v8* execution manual. One script per job, in the 
 - **Pip size is live:** forex = the pair's normal pip; everything else = **0.01% of the current price, recalculated every bar**, so it follows the market (a stock at $10 and later at $180 behaves the same). *Pip size override* forces your own value.
 - Volume profiles use **percentage-size price buckets** (default 0.02%), identical behaviour at any price level.
 - Round numbers: 00/50 on forex, powers of ten elsewhere (e.g. 1,000s on BTC at 85,000, 10s on a $200 stock).
-- **Account and risk in USD.** Risk per trade = % of account (default 0.1%) or a fixed USD amount. Position size = risk ÷ (stop distance × point value), rounded down to 0.01 lot (forex), 0.0001 (crypto) or 1 (everything else; set *Quantity step* for CFDs/fractional shares). USD-quoted symbols (EURUSD, BTCUSD, US stocks) use no conversion at all; for non-USD quotes (USDJPY, USDCAD, USDCHF…) the pip value is taken at the live rate. USDT/USDC/BUSD/FDUSD/DAI count as USD. Every alert shows the risk in $ and the current $ value of one pip (forex, per lot) or basis point (others, per unit).
+- **Real account currency (default CAD).** Risk per trade = % of account (default 0.1%) or a fixed amount. Position size = risk ÷ (stop distance × point value × live quote→account rate), rounded down to 0.01 lot (forex), 0.0001 (crypto) or 1 (everything else; set *Quantity step* for CFDs/fractional shares), exactly as the broker values it. USDT/USDC/BUSD/FDUSD/DAI count as USD. Every alert shows the risk and the live value of one pip (forex, per lot) or basis point (others, per unit) in the account currency.
 - Bar-count settings (zone armed 48 bars, trigger window 8 bars, Setup B lookback 96 bars) count *market* bars, so on stocks (≈26 15M bars per regular session) they cover more calendar time than on 24h markets.
 - Sessions (VWAP, session profile) follow the symbol's own trading day: 17:00 NY for forex, the exchange session for stocks, 00:00 UTC for crypto.
 
@@ -87,7 +87,7 @@ Generated from the 15M indicator: `python3 tools/make_strategy.py`. It is the in
 market (or retest limit) entry with its stop and target, cancel when a limit expires, stop update when T3 trails.
 Everything upstream (Daily bias, 4H zones, triggers, every skip rule) is the indicator's code, so a backtest tests the whole system.
 
-- 120,000 **USD**, 0.1% risk per trade, margin 1% (100:1; with the Pine default of 100% every FX order is rejected), up to 3 positions. Keep *Properties → Initial capital* equal to the *Account size* input.
+- 120,000 **CAD** (strategy currency; change *Properties → Base currency* if your account differs), 0.1% risk per trade, margin 1% (100:1; with the Pine default of 100% every FX order is rejected), up to 3 positions. Keep *Properties → Initial capital* equal to the *Account size* input.
 - **Deep Backtesting:** turn it on in the Strategy Tester's date-range menu (it is a TradingView setting, not something a script can switch on). Drawings and the table only cover the bars loaded on the chart; the Strategy report covers the full deep range.
 - Costs: `slippage = 5` ticks per fill (≈ 1 pip round trip) in the Strategy Tester; the spread input is also added to every stop buffer.
 - With Deep Backtesting the chart (and the funnel table) only covers the loaded bars; the Strategy report covers the whole range.
