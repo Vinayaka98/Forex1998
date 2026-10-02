@@ -42,7 +42,7 @@ Alerts: bias change at the daily close (and optionally the daily sentence every 
 | H9/H10 | Levels in categories A value (monthly + weekly), B structure (Daily + 4H swings), C volume structure (Fixed VPs, HVN/LVN), D Fib, E gaps/round numbers, clustered into zones ≤ 0.6× 4H ATR wide. A zone must contain A, B or C: Fib/gaps/round numbers alone never make a zone. 3+ categories = A-quality. |
 | H11 | Zone 1 = most categories, then nearest, on the Daily side of price (below for LONG, above for SHORT), within 1.5× Daily ATR. Zone 2 only if clearly separate. |
 | H12 | Invalidation = 4H swing just beyond the zone (within 1× 4H ATR) or the zone edge, + 0.1× 4H ATR. |
-| H13 | First obstacle beyond the zone: value levels, swings, Fixed VP levels, HVN/LVN, gaps, Fib 1.272/1.618 extensions. R measured from the zone middle; under 2R → DOWNGRADE/SKIP. |
+| H13 | First **serious** obstacle beyond the zone: the nearest cluster with 2+ evidence categories, a Daily/4H swing, or a 4H Fib 1.272/1.618 extension. R measured from the zone middle; under 2R → DOWNGRADE/SKIP. Setting *Any single level (strict)* treats every value/volume/swing/gap line as an obstacle (rarely leaves 2R). |
 | H14 | 4H sentence in the table and alerts. |
 
 Alerts: **price trades into Zone 1 or Zone 2 → "open the 15M"** (real time, once per bar). This replaces manually placed zone alerts.
@@ -63,13 +63,13 @@ Self-contained: it recomputes the Daily bias and rebuilds the 4H zones at every 
 | M8 | Rejection wick (wick ≥ 1.5× body, close in the favourable half), engulfing (closes in the top/bottom 30%), double tap (two 15M swing points in the zone, the second not more than 0.25× ATR beyond the first, then a shift). |
 | M11 | News times typed into the settings, ± 15 min. |
 | M12 | Stop beyond the sweep low/high (or beyond the zone) + 0.12× 15M ATR + spread. |
-| M13 | First obstacle beyond the entry from the 4H target list; under 2R → skip. |
+| M13 | First serious obstacle beyond the entry (same definition as H13); under 2R → skip. |
 | M14 | 0.1% of the account, quote currency converted to the account currency, rounded down to 0.01 lot (shown in the alert). |
 | Risk rules | Max 3 positions, max 0.2% open risk per pair (trades not yet at break-even), never add to a loser, no opposite position. |
 | Part VIII | Default T4: stop or full planned target, nothing else. Option T3: after +1.5R the stop follows newly confirmed 15M swings. No automatic break-even. |
 
 Table: bias, zones and their state, chop score, VWAP/SVP, news, open trades, results in R after costs (stop assumed first when a candle hits both), **the funnel**
-(4H plans → zone touches → triggers → confirmed → signals) and the top skip reasons, so you can see where setups stop.
+(4H plans → with Daily bias → with a zone → zone touches → triggers → confirmed → signals) and the top skip reasons, so you can see where setups stop.
 Every order alert includes the manual's pre-click script. Skipped setups are marked with a grey × (hover for the reason).
 Not checked: correlated USD exposure across pairs (one chart cannot see other charts).
 

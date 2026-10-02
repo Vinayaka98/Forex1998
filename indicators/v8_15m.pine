@@ -45,6 +45,7 @@ maxDistD   = input.float(1.5, "Only zones within Daily ATR × of price", minval 
 invBufAtr  = input.float(0.1, "4H invalidation buffer (× 4H ATR)", minval = 0, step = 0.05, group = G_4)
 gapMinPct  = input.float(30, "Gaps: min size (% of 4H ATR)", minval = 0, group = G_4)
 useRound   = input.bool(true, "Round numbers (00 / 50) as category E", group = G_4)
+obstacleMd = input.string("Serious obstacles", "First obstacle / target (H13, M13)", options = ["Serious obstacles", "Any single level (strict)"], group = G_4, tooltip = "Serious = the nearest cluster with 2+ evidence categories, a Daily/4H swing, or a 4H Fib extension. Strict = any single value / volume / swing / gap level, which in a crowded area rarely leaves 2R of room.")
 
 binPips    = input.float(2.0, "Profile bucket size (pips)", minval = 0.5, step = 0.5, group = G_VP)
 vaPct      = input.float(70, "Value area %", minval = 50, maxval = 95, group = G_VP)
@@ -553,6 +554,8 @@ var float hfPoc = na
 var float hfVah = na
 var float hfVal = na
 var int nPlans = 0
+var int nBiasPlans = 0
+var int nZonePlans = 0
 
 f_add(array<float> p, array<string> c, array<string> n, float v, string cat, string name) =>
     if not na(v)
@@ -661,21 +664,7 @@ if replan
             float rv = rBase + k * rStep
             f_add(lvP, lvC, lvN, rv, "E", math.abs(rv / (100 * pip) - math.round(rv / (100 * pip))) < 0.01 ? "round 00" : "round 50")
 
-    // Targets: obstacles only (no Fib retracements, no round numbers) + 4H extensions
-    tgP.clear()
-    tgN.clear()
     int lc = lvP.size()
-    if lc > 0
-        for i = 0 to lc - 1
-            if lvC.get(i) != "D" and not str.startswith(lvN.get(i), "round")
-                tgP.push(lvP.get(i))
-                tgN.push(lvN.get(i))
-    if not na(fr4)
-        tgP.push(iSp + 1.272 * fr4)
-        tgN.push("4H Fib ext 1.272")
-        tgP.push(iSp + 1.618 * fr4)
-        tgN.push("4H Fib ext 1.618")
-
     // Cluster into zones
     array<float>  zLo  = array.new<float>()
     array<float>  zHi  = array.new<float>()
@@ -701,6 +690,34 @@ if replan
                     zCat.set(z, zCat.get(z) + ct)
                 if not str.contains(zNm.get(z), nm)
                     zNm.set(z, zNm.get(z) + " + " + nm)
+
+    // Targets / first obstacles. Fib retracements and round numbers are never targets.
+    tgP.clear()
+    tgN.clear()
+    if obstacleMd == "Any single level (strict)" and lc > 0
+        for i = 0 to lc - 1
+            if lvC.get(i) != "D" and not str.startswith(lvN.get(i), "round")
+                tgP.push(lvP.get(i))
+                tgN.push(lvN.get(i))
+    else if obstacleMd != "Any single level (strict)"
+        if lc > 0
+            for i = 0 to lc - 1
+                if lvC.get(i) == "B"
+                    tgP.push(lvP.get(i))
+                    tgN.push(lvN.get(i))
+        int zcT = zLo.size()
+        if zcT > 0
+            for z = 0 to zcT - 1
+                if str.length(zCat.get(z)) >= 2
+                    tgP.push(zLo.get(z))
+                    tgN.push("cluster [" + zCat.get(z) + "] " + zNm.get(z))
+                    tgP.push(zHi.get(z))
+                    tgN.push("cluster [" + zCat.get(z) + "] " + zNm.get(z))
+    if not na(fr4)
+        tgP.push(iSp + 1.272 * fr4)
+        tgN.push("4H Fib ext 1.272")
+        tgP.push(iSp + 1.618 * fr4)
+        tgN.push("4H Fib ext 1.618")
 
     // Pick Zone 1 / Zone 2 (same rules as v8 4H)
     array<int> picks = array.new<int>()
@@ -754,6 +771,8 @@ if replan
                 nz0.names := zNm.get(pk)
         fresh.push(nz0)
     zones := fresh
+    nBiasPlans += bias != 0 ? 1 : 0
+    nZonePlans += zones.size() > 0 ? 1 : 0
 
     if showZones
         int k = 0
@@ -1023,7 +1042,7 @@ if barstate.islast and showTable
         opn := opn + (opn == "" ? "" : " | ") + (t.dir == 1 ? "BUY " : "SELL ") + (t.filled ? "" : "LIMIT ") + f_px(t.entry) + " SL " + f_px(t.stop) + " TP " + f_px(t.tp)
     f_row(6, "Open trades", trades.size() == 0 ? "none" : opn, color.white)
     f_row(7, "Results on this chart", nClosed == 0 ? "no closed trades yet" : str.tostring(nClosed) + " trades · " + str.tostring(100.0 * nWins / nClosed, "#") + "% win · avg " + str.tostring(sumR / nClosed, "#.##") + "R · total " + str.tostring(sumR, "#.#") + "R (after costs)", sumR >= 0 ? color.lime : color.red)
-    f_row(8, "Funnel", str.tostring(nPlans) + " 4H plans → " + str.tostring(nArms) + " zone touches → " + str.tostring(nTrig) + " triggers → " + str.tostring(nConf) + " confirmed → " + str.tostring(nEntry) + " signals (" + str.tostring(nLimitPlaced) + " limit)", color.white)
+    f_row(8, "Funnel", str.tostring(nPlans) + " 4H plans → " + str.tostring(nBiasPlans) + " with Daily bias → " + str.tostring(nZonePlans) + " with a zone → " + str.tostring(nArms) + " zone touches → " + str.tostring(nTrig) + " triggers → " + str.tostring(nConf) + " confirmed → " + str.tostring(nEntry) + " signals (" + str.tostring(nLimitPlaced) + " limit)", color.white)
     string sk = ""
     array<string> keys = skips.keys()
     array<int> vals = array.new<int>()
