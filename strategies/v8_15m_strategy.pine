@@ -94,6 +94,7 @@ showTable  = input.bool(true, "15M table", group = G_O)
 alertArm   = input.bool(false, "Alert: price entered a zone", group = G_O)
 
 const string TZ = "America/New_York"
+const string BUILD = "build 8 · 2026-10-02 · structure close-beyond-swing, fresh shift level, FIFO fix"
 const int    DAY = 86400000
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -1073,7 +1074,7 @@ plot(vw, "VWAP", color.new(color.orange, 0))
 plot(hF15, "HMA 55", hfDir == 1 ? color.teal : hfDir == -1 ? color.maroon : color.gray)
 plot(dBias, "Daily bias", display = display.data_window)
 
-var table tb = table.new(position.top_right, 2, 12, bgcolor = color.new(color.black, 20), border_width = 1)
+var table tb = table.new(position.top_right, 2, 13, bgcolor = color.new(color.black, 20), border_width = 1)
 f_row(int r, string k, string v, color c) =>
     table.cell(tb, 0, r, k, text_color = color.silver, text_size = size.small, text_halign = text.align_left)
     table.cell(tb, 1, r, v, text_color = c, text_size = size.small, text_halign = text.align_left)
@@ -1106,3 +1107,4 @@ if barstate.islast and showTable
     f_row(9, "Top skip reasons", sk == "" ? "none yet" : sk, color.orange)
     f_row(10, "Last pre-click script", lastScript == "" ? "none yet" : lastScript, color.white)
     f_row(11, "Not checked here", "correlated USD exposure across pairs · revenge trading · anchors moved by hand", color.gray)
+    f_row(12, "Version", BUILD, color.aqua)
