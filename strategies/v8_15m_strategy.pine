@@ -53,7 +53,7 @@ gapMinPct  = input.float(30, "Gaps: min size (% of 4H ATR)", minval = 0, group =
 useRound   = input.bool(true, "Round numbers (00 / 50) as category E", group = G_4)
 obstacleMd = input.string("Serious obstacles", "First obstacle / target (H13, M13)", options = ["Serious obstacles", "Any single level (strict)"], group = G_4, tooltip = "Serious = the nearest cluster with 2+ evidence categories, a Daily/4H swing, or a 4H Fib extension. Strict = any single value / volume / swing / gap level, which in a crowded area rarely leaves 2R of room.")
 
-binPips    = input.float(2.0, "Profile bucket size (pips; non-FX: basis points)", minval = 0.5, step = 0.5, group = G_VP)
+binBp      = input.float(2.0, "Profile bucket size (% steps in basis points)", minval = 0.5, step = 0.5, group = G_VP, tooltip = "Buckets are a fixed percentage of price (2 = 0.02%, about 2 pips on EURUSD), so the same setting works for forex, stocks and crypto at any price level.")
 vaPct      = input.float(70, "Value area %", minval = 50, maxval = 95, group = G_VP)
 vpRows     = input.int(100, "Rows for HVN / LVN detection", minval = 20, maxval = 300, group = G_VP)
 vrvp4hDays = input.int(28, "4H VRVP stand-in window (days)", minval = 7, group = G_VP)
@@ -93,14 +93,14 @@ const int    DAY = 86400000
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers (identical to v8 Daily / v8 4H)
 // ─────────────────────────────────────────────────────────────────────────────
-// "pip": forex = the usual pip; anything else (BTC, stocks, indices) = 1 basis point (0.01%) of the
-// first price on the chart, so every pip-based setting scales with the instrument.
+// "pip": forex = the usual pip; anything else (BTC, stocks, indices, futures) = 1 basis point (0.01%)
+// of the current price, so every pip-based setting scales with the instrument and its price level.
 bool  isFx = syminfo.type == "forex"
-var float bpUnit = na
-if na(bpUnit)
-    bpUnit := close * 0.0001
-float pip = isFx ? syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1) : bpUnit
-float binSz = binPips * pip
+float pip  = isFx ? syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1) : close * 0.0001
+// Logarithmic price buckets: bucket k covers [exp(k·lnStep), exp((k+1)·lnStep))
+float lnStep = math.log(1 + binBp / 10000)
+f_key(float p) => math.floor(math.log(math.max(p, 1e-10)) / lnStep)
+f_kpx(float k) => math.exp(k * lnStep)
 float atr15 = ta.atr(atrLen)
 f_px(float p) => na(p) ? "n/a" : str.tostring(p, format.mintick)
 
@@ -275,8 +275,8 @@ bool h4New = h4Time != h4Time[1]
 // Incremental volume profiles in fixed price buckets
 // ─────────────────────────────────────────────────────────────────────────────
 f_mapAdd(map<int, float> m, float h, float l, float v, float sign) =>
-    int a = math.floor(l / binSz)
-    int b = math.floor(h / binSz)
+    int a = f_key(l)
+    int b = f_key(h)
     float share = sign * v / (b - a + 1)
     for k = a to b
         float nv = nz(m.get(k)) + share
@@ -313,9 +313,9 @@ f_va(map<int, float> m) =>
                 else
                     dn  -= 1
                     acc += nd
-            poc := (ks.get(pr) + 0.5) * binSz
-            vah := (ks.get(up) + 1) * binSz
-            val := ks.get(dn) * binSz
+            poc := f_kpx(ks.get(pr) + 0.5)
+            vah := f_kpx(ks.get(up) + 1)
+            val := f_kpx(ks.get(dn))
     [poc, vah, val]
 
 // Resample a bucket map into vpRows rows, then find the nearest major HVN / LVN above and below price
@@ -329,12 +329,11 @@ f_nodes(map<int, float> m, float price) =>
     if nk > 8
         int   kmin = ks.min()
         int   kmax = ks.max()
-        float bot  = kmin * binSz
-        float step = (kmax + 1 - kmin) * binSz / vpRows
+        float span = float(kmax + 1 - kmin) / vpRows
         array<float> rows = array.new<float>(vpRows, 0.0)
         for i = 0 to nk - 1
             int k = ks.get(i)
-            int r = math.max(0, math.min(vpRows - 1, math.floor((k - kmin) * binSz / step)))
+            int r = math.max(0, math.min(vpRows - 1, math.floor((k - kmin) / span)))
             rows.set(r, rows.get(r) + math.max(0.0, nz(m.get(k))))
         array<float> sm = array.new<float>(vpRows, 0.0)
         for i = 0 to vpRows - 1
@@ -355,7 +354,7 @@ f_nodes(map<int, float> m, float price) =>
                         isMax := false
                     if sm.get(j) < v
                         isMin := false
-            float px = bot + (i + 0.5) * step
+            float px = f_kpx(kmin + (i + 0.5) * span)
             if isMax and v >= 1.2 * mean
                 if px > price and (na(hvnUp) or px < hvnUp)
                     hvnUp := px
@@ -415,12 +414,12 @@ f_mapAdd(mpW, high, low, vol, 1.0)
 f_mapAdd(mpM, high, low, vol, 1.0)
 f_mapAdd(mpVD, high, low, vol, 1.0)
 f_mapAdd(mpV4, high, low, vol, 1.0)
-for k = math.floor(low / binSz) to math.floor(high / binSz)
+for k = f_key(low) to f_key(high)
     float sv = nz(mpSes.get(k))
     if sv > sesPocV
         sesPocV := sv
         sesPocK := k
-float sesPoc = na(sesPocK) ? na : (sesPocK + 0.5) * binSz
+float sesPoc = na(sesPocK) ? na : f_kpx(sesPocK + 0.5)
 bH.push(high)
 bL.push(low)
 bV.push(vol)
@@ -519,7 +518,9 @@ for nm in newsMin
         newsBlock := true
 bool inWin = not useWin or not na(time(timeframe.period, sessWin, TZ))
 
-float qRate   = request.currency_rate(syminfo.currency, accountCcy, true)
+// Stablecoin-quoted crypto (BTCUSDT…) is converted as USD
+string qCcy   = syminfo.currency == "USDT" or syminfo.currency == "USDC" or syminfo.currency == "BUSD" or syminfo.currency == "FDUSD" or syminfo.currency == "DAI" ? "USD" : syminfo.currency
+float qRate   = qCcy == accountCcy ? 1.0 : request.currency_rate(qCcy, accountCcy, true)
 float riskAmt = accountSize * riskPct / 100
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -4,8 +4,13 @@
 
 Built from the *Trading System v8* execution manual. One script per job, in the manual's order.
 
-**Instruments:** forex uses normal pips. On anything else (BTC, stocks, indices) every "pip" setting means **1 basis point (0.01%) of price**,
-round numbers are powers of ten (e.g. 1,000s on BTC), and position size is rounded to 0.0001 (crypto) or 1 (other) instead of 0.01 lot.
+**Any instrument (forex, stocks, crypto, futures, CFDs):**
+- Forex uses normal pips. Everything else: every "pip" setting means **1 basis point (0.01%) of the current price**, so it scales as price moves (a stock going from $10 to $180 keeps the same behaviour).
+- Volume profiles use **percentage-size price buckets** (default 0.02%), identical behaviour at any price level.
+- Round numbers: 00/50 on forex, powers of ten elsewhere (e.g. 1,000s on BTC at 85,000, 10s on a $200 stock).
+- Position size: risk ÷ (stop distance × point value × quote→account FX rate), rounded down to 0.01 lot (forex), 0.0001 (crypto) or 1 (everything else; set *Quantity step* for CFDs/fractional shares). USDT/USDC/BUSD/FDUSD/DAI quotes are treated as USD.
+- Bar-count settings (zone armed 48 bars, trigger window 8 bars, Setup B lookback 96 bars) count *market* bars, so on stocks (≈26 15M bars per regular session) they cover more calendar time than on 24h markets.
+- Sessions (VWAP, session profile) follow the symbol's own trading day: 17:00 NY for forex, the exchange session for stocks, 00:00 UTC for crypto.
 
 | Script | Manual part | Status |
 |---|---|---|
