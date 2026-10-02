@@ -22,7 +22,7 @@ Built from the *Trading System v8* execution manual. One script per job, in the 
 ### v8 Daily (`indicators/v8_daily.pine`), use on a Daily chart
 | Step | Mechanized as |
 |---|---|
-| D1 structure | Zigzag of confirmed pivots (5 bars each side) that moved ≥ 1.5× ATR from the previous opposite swing. HH+HL = bullish, LH+LL = bearish, else mixed. A close through the last HL/LH breaks the structure. |
+| D1 structure | Zigzag of confirmed pivots (5 bars each side) that moved ≥ 1.5× ATR from the previous opposite swing. HH+HL = bullish, LH+LL = bearish, else mixed. A daily close beyond the last swing high/low counts as the new HH/LL immediately (a one-way move never confirms a pivot), and a close back through the last HL/LH breaks the structure. |
 | D2 HMA 200 | Price side; slope over 5 days (flat if < 0.05× ATR); "crossing repeatedly" = ≥ 2 crosses in 20 days. |
 | D3 HMA 55 | Alignment / pullback / bounce text. Context only. |
 | D4 bias | LONG = bullish structure + price above rising HMA 200 (not crossing). SHORT = mirror. Everything else NEUTRAL. No manual override. |

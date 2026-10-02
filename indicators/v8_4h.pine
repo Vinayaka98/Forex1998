@@ -151,13 +151,12 @@ f_daily() =>
     [lL, pL] = f_lastTwo(dp, dh, false)
     int stD = 0
     if not na(pH) and not na(pL)
-        bool hh = lH > pH
-        bool hl = lL > pL
-        stD := hh and hl ? 1 : not hh and not hl ? -1 : 0
-        if stD == 1 and close < lL
-            stD := 0
-        if stD == -1 and close > lH
-            stD := 0
+        // D1: a close beyond the last swing is a new high/low even before its pivot is confirmed
+        bool hh = lH > pH or close > lH
+        bool hl = lL > pL and close >= lL
+        bool ll = lL < pL or close < lL
+        bool lh = lH < pH and close <= lH
+        stD := hh and hl ? 1 : lh and ll ? -1 : 0
     int b = stD == 1 and sdD == 1 and sDd == 1 and crN < crossMax ? 1 : stD == -1 and sdD == -1 and sDd == -1 and crN < crossMax ? -1 : 0
     [isp, ist, iep, iet, idir] = f_impulse(dp, dt, dh, b)
     [b[1], stD[1], sdD[1], sDd[1], crN[1], lH[1], pH[1], lL[1], pL[1], isp[1], ist[1], iep[1], iet[1], idir[1], atrD[1]]

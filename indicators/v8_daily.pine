@@ -122,22 +122,20 @@ f_lastTwo(array<float> p, array<bool> h, bool hi) =>
 int    structDir = 0
 string structTxt = "not enough swings yet"
 if not na(prevH) and not na(prevL)
-    bool hh = lastH > prevH
-    bool hl = lastL > prevL
+    // D1: a close beyond the last swing IS a new high/low, even before the pivot can be confirmed
+    // (pivots need swingLen days of reaction, which a one-way move never gives).
+    bool hh = lastH > prevH or close > lastH
+    bool hl = lastL > prevL and close >= lastL
+    bool ll = lastL < prevL or close < lastL
+    bool lh = lastH < prevH and close <= lastH
     if hh and hl
         structDir := 1
-        structTxt := "bullish (HH + HL)"
-    else if not hh and not hl
+        structTxt := close > lastH ? "bullish (new high above last swing high + HL)" : "bullish (HH + HL)"
+    else if lh and ll
         structDir := -1
-        structTxt := "bearish (LH + LL)"
+        structTxt := close < lastL ? "bearish (LH + new low below last swing low)" : "bearish (LH + LL)"
     else
-        structTxt := "mixed (" + (hh ? "HH" : "LH") + " + " + (hl ? "HL" : "LL") + ")"
-    if structDir == 1 and close < lastL
-        structDir := 0
-        structTxt := "bullish structure broken (closed below last HL)"
-    if structDir == -1 and close > lastH
-        structDir := 0
-        structTxt := "bearish structure broken (closed above last LH)"
+        structTxt := "mixed (" + (hh ? "HH" : "LH") + " + " + (ll ? "LL" : "HL") + ")"
 
 // ─────────────────────────────────────────────────────────────────────────────
 // D2-D4: HMA 200 regime, HMA 55 momentum, preliminary bias
