@@ -9,6 +9,7 @@ Built from the *Trading System v8* execution manual. One script per job, in the 
 | `indicators/v8_daily.pine` | Part II, Daily D1–D12: bias + levels, **never entries** | built, not yet compiled |
 | `indicators/v8_4h.pine` | Part III, 4H H0–H14: Zone 1 / Zone 2, invalidation, target, zone alerts, **never entries** | built, not yet compiled |
 | `indicators/v8_15m.pine` | Part IV 15M M0–M16 + Part VII setups + Part VIII management + Part X no-trade: **the only script that gives BUY/SELL with entry, stop loss and take profit** | built, not yet compiled |
+| `strategies/v8_15m_strategy.pine` | The 15M indicator with real orders, for the Strategy Tester (whole chain: Daily → 4H → 15M) | **generated** by `tools/make_strategy.py`, never edited by hand |
 
 ### v8 Daily (`indicators/v8_daily.pine`), use on a Daily chart
 | Step | Mechanized as |
@@ -72,6 +73,15 @@ Table: bias, zones and their state, chop score, VWAP/SVP, news, open trades, res
 (4H plans → with Daily bias → with a zone → zone touches → triggers → confirmed → signals) and the top skip reasons, so you can see where setups stop.
 Every order alert includes the manual's pre-click script. Skipped setups are marked with a grey × (hover for the reason).
 Not checked: correlated USD exposure across pairs (one chart cannot see other charts).
+
+### v8 strategy (`strategies/v8_15m_strategy.pine`), for backtesting
+Generated from the 15M indicator: `python3 tools/make_strategy.py`. It is the indicator plus broker orders at three points:
+market (or retest limit) entry with its stop and target, cancel when a limit expires, stop update when T3 trails.
+Everything upstream (Daily bias, 4H zones, triggers, every skip rule) is the indicator's code, so a backtest tests the whole system.
+
+- 120,000 CAD, 0.1% risk per trade, margin 1% (100:1; with the Pine default of 100% every FX order is rejected), up to 3 positions.
+- Costs: `slippage = 5` ticks per fill (≈ 1 pip round trip) in the Strategy Tester; the spread input is also added to every stop buffer.
+- With Deep Backtesting the chart (and the funnel table) only covers the loaded bars; the Strategy report covers the whole range.
 
 ---
 
