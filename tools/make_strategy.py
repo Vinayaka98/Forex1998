@@ -30,7 +30,7 @@ def main() -> None:
         'strategy("v8 15M Strategy", shorttitle = "v8 15M Strat", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 300, max_bars_back = 2000,\n'
         '     initial_capital = 120000, currency = currency.CAD, default_qty_type = strategy.fixed, pyramiding = 3,\n'
         '     process_orders_on_close = true, slippage = 5, commission_type = strategy.commission.percent, commission_value = 0,\n'
-        '     margin_long = 1, margin_short = 1)',
+        '     margin_long = 1, margin_short = 1, close_entries_rule = "ANY")',
     )
 
     # Open: market order at the signal close, or a limit at the retest level

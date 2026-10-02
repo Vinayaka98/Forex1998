@@ -64,7 +64,7 @@ Self-contained: it recomputes the Daily bias and rebuilds the 4H zones at every 
 | Step | Mechanized as |
 |---|---|
 | M0 | Nothing happens until price trades into Zone 1 or Zone 2 (zone "armed" for up to 48 bars; afterwards price must leave and come back). |
-| M1/M9 | 15M swings (3 bars each side). Structure shift = close through the latest 15M swing high (long) / low (short) within 8 bars of the trigger. Continuation exception: Setup B (zone was broken within the last day) or 15M structure already HH/HL (LL/LH). |
+| M1/M9 | 15M swings (3 bars each side). Structure shift = close through the latest 15M swing high (long) / low (short) within 8 bars of the trigger. Continuation exception: Setup B or 15M structure already HH/HL (LL/LH). Setup B = within the last 96 bars price was on the other side of the zone, broke through and was **accepted** beyond it (4 consecutive 15M closes) before the retest; otherwise Setup A. |
 | M2 | Chop = 3 of 5 signs: ≥ 4 colour flips in 6 candles, ≥ 3 two-sided-wick candles, flat VWAP crossed ≥ 3× in 12 bars, flat HMA 55, session POC crossed ≥ 3× in 12 bars. |
 | M3/M4 | Session VWAP and session volume profile. Skip only when **both** are strongly against (price on the wrong side of a VWAP sloping against the trade **and** beyond sVAL/sVAH); otherwise recorded as a flag. |
 | M5/M6 | HMA 55 and volume ≥ 1.2× MA20: recorded as flags on every trade (volume can be made mandatory). |
@@ -74,7 +74,7 @@ Self-contained: it recomputes the Daily bias and rebuilds the 4H zones at every 
 | M12 | Stop beyond the sweep low/high (or beyond the zone) + 0.12× 15M ATR + spread. |
 | M13 | First serious obstacle beyond the entry (same definition as H13); under 2R → skip. |
 | M14 | 0.1% of the account, quote currency converted to the account currency, rounded down to 0.01 lot (shown in the alert). |
-| Risk rules | Max 3 positions, max 0.2% open risk per pair (trades not yet at break-even), never add to a loser, no opposite position. |
+| Risk rules | Max 3 positions, max 0.2% open risk per pair (trades not yet at break-even), never add to a loser, no opposite position, one signal per candle, skip when spread + commission exceed 20% of the stop. |
 | Part VIII | Default T4: stop or full planned target, nothing else. Option T3: after +1.5R the stop follows newly confirmed 15M swings. No automatic break-even. |
 
 Table: bias, zones and their state, chop score, VWAP/SVP, news, open trades, results in R after costs (stop assumed first when a candle hits both), **the funnel**
@@ -89,6 +89,7 @@ Everything upstream (Daily bias, 4H zones, triggers, every skip rule) is the ind
 
 - 120,000 **CAD** (strategy currency; change *Properties → Base currency* if your account differs), 0.1% risk per trade, margin 1% (100:1; with the Pine default of 100% every FX order is rejected), up to 3 positions. Keep *Properties → Initial capital* equal to the *Account size* input.
 - **Deep Backtesting:** turn it on in the Strategy Tester's date-range menu (it is a TradingView setting, not something a script can switch on). Drawings and the table only cover the bars loaded on the chart; the Strategy report covers the full deep range.
+- Exits use `close_entries_rule = "ANY"` so each stop/target closes its own trade (the default FIFO closed other trades' units first).
 - Costs: `slippage = 5` ticks per fill (≈ 1 pip round trip) in the Strategy Tester; the spread input is also added to every stop buffer.
 - With Deep Backtesting the chart (and the funnel table) only covers the loaded bars; the Strategy report covers the whole range.
 
@@ -131,6 +132,7 @@ gives a full trade list (export via *List of trades → Export*), equity curve a
 - Entries: market order at the signal candle's close, sized to *Risk per trade %* of *Account size*.
 - Exits mirror the trade model: stop moves to breakeven at 1R; trend trades close 50% at 2R and the runner trails
   (or exits at the target in *Fixed target* mode); range trades exit all at the target.
+- Exits use `close_entries_rule = "ANY"` so each stop/target closes its own trade (the default FIFO closed other trades' units first).
 - Costs: `slippage = 5` ticks per fill (≈ 0.5 pip each way, ≈ 1 pip round trip). Change it under *Properties* to match your real spread + commission.
 - Margin is set to 1% (100:1 leverage, like a typical FX prop account). With the Pine default of 100% every forex order is rejected for lack of cash and the report stays empty.
 - Keep *Properties → Initial capital* equal to the *Account size* input (both default 120000 CAD).

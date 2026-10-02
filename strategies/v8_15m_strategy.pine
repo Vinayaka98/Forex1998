@@ -13,7 +13,7 @@
 strategy("v8 15M Strategy", shorttitle = "v8 15M Strat", overlay = true, max_lines_count = 500, max_labels_count = 500, max_boxes_count = 300, max_bars_back = 2000,
      initial_capital = 120000, currency = currency.CAD, default_qty_type = strategy.fixed, pyramiding = 3,
      process_orders_on_close = true, slippage = 5, commission_type = strategy.commission.percent, commission_value = 0,
-     margin_long = 1, margin_short = 1)
+     margin_long = 1, margin_short = 1, close_entries_rule = "ANY")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Inputs
@@ -34,6 +34,7 @@ riskFixed   = input.float(120, "Risk amount in account currency (when 'Fixed amo
 maxOpen     = input.int(3, "Max open positions (this pair)", minval = 1, maxval = 3, group = G_R)
 maxOpenRisk = input.float(0.2, "Max open risk % (this pair)", minval = 0.1, maxval = 0.3, step = 0.05, group = G_R, tooltip = "Trades whose stop is not yet at break-even or better count as open risk. Correlated risk across pairs cannot be seen from one chart: check it yourself.")
 spreadPips  = input.float(1.0, "Spread + commission (pips; non-FX: basis points of price)", minval = 0, step = 0.1, group = G_R, tooltip = "Added to the stop buffer and charged in the results. For BTC/stocks 1 = 0.01% of price.")
+maxCostPct  = input.float(20, "Skip if spread + commission > % of the stop", minval = 1, maxval = 100, group = G_R, tooltip = "A 1-pip cost on a 5-pip stop turns every loss into -1.2R. Backtest: median stop-out was -1.21R.")
 qtyStepIn   = input.float(0, "Quantity step (0 = auto)", minval = 0, group = G_R, tooltip = "Auto: forex 1,000 units (0.01 lot), crypto 0.0001, everything else 1. Position size is rounded down to this.")
 pipIn      = input.float(0, "Pip size override (0 = auto)", minval = 0, group = G_R, tooltip = "Auto: forex = the pair's normal pip (0.0001, or 0.01 for JPY pairs); anything else = 0.01% of the current price, recalculated on every bar. Enter a value to force your own pip size.")
 
@@ -70,6 +71,7 @@ wickMult   = input.float(1.5, "Rejection wick ≥ body ×", minval = 0.5, step =
 engulfPos  = input.float(0.7, "Engulfing closes in the top/bottom (1 - x) of its range", minval = 0.5, maxval = 1, step = 0.05, group = G_M)
 dtapTol    = input.float(0.25, "Double tap: 2nd test may undercut by ATR ×", minval = 0, step = 0.05, group = G_M)
 brBars     = input.int(96, "Setup B: zone was broken within (bars)", minval = 4, group = G_M)
+acceptBars = input.int(4, "Setup B: acceptance = consecutive 15M closes beyond the zone", minval = 1, group = G_M, tooltip = "Manual Part VII: the break must show acceptance, not an instant failure. Without it the setup is A (pullback) and needs a structure shift.")
 chaseAtr   = input.float(0.25, "Anti-chase: max distance from trigger level (× 15M ATR)", minval = 0.05, step = 0.05, group = G_M, tooltip = "Further than this → a LIMIT order at the retest level instead of a market order (M7 / M15).")
 limitBars  = input.int(4, "Limit order valid for (bars)", minval = 1, group = G_M)
 stopMode   = input.string("Sweep low/high", "Stop placement (M12)", options = ["Sweep low/high", "Beyond the zone"], group = G_M)
@@ -829,6 +831,7 @@ var int nEntry = 0
 var int nLimitPlaced = 0
 var map<string, int> skips = map.new<string, int>()
 var string lastScript = ""
+var int    lastSigBar = na
 
 // Limit fills, expiries, stop / target hits (stop assumed first if a candle hits both)
 f_close(Trade t) =>
@@ -902,12 +905,20 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
             z.trig    := false
             z.tap1    := na
             z.tap2    := na
+            // Setup B: price was on the other side of the zone, broke through, and was ACCEPTED beyond it
+            // (acceptBars consecutive closes on our side) before coming back to retest.
             bool wasOther = false
+            int  run      = 0
+            int  bestRun  = 0
             for j = 1 to brBars
-                if dir == 1 ? close[j] < z.lo : close[j] > z.hi
+                bool ours  = dir == 1 ? close[j] > z.hi : close[j] < z.lo
+                bool other = dir == 1 ? close[j] < z.lo : close[j] > z.hi
+                if other
                     wasOther := true
                     break
-            z.setup  := wasOther ? "B" : "A"
+                run     := ours ? run + 1 : 0
+                bestRun := math.max(bestRun, run)
+            z.setup  := wasOther and bestRun >= acceptBars ? "B" : "A"
             z.status := "in zone: waiting for trigger"
             nArms += 1
             if alertArm
@@ -987,6 +998,10 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
                     string why = ""
                     if riskPx <= 0
                         why := f_skip("stop not beyond entry")
+                    else if bar_index == lastSigBar
+                        why := f_skip("already one signal on this candle")
+                    else if spreadPips * pip / riskPx * 100 > maxCostPct
+                        why := f_skip("costs over " + str.tostring(maxCostPct) + "% of the stop")
                     else if chop
                         why := f_skip("15M chop (" + str.tostring(chopScore) + "/5 signs)")
                     else if newsBlock
@@ -1027,6 +1042,7 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
                             strategy.entry(id, dir == 1 ? strategy.long : strategy.short, qty = units, limit = chase ? entry : na, comment = side + " " + z.setup + " " + z.trigName)
                             strategy.exit("x" + id, from_entry = id, stop = sl, limit = tg, comment_loss = "SL", comment_profit = "TP")
                             nEntry += 1
+                            lastSigBar := bar_index
                             nLimitPlaced += chase ? 1 : 0
                             lastScript := "I am trading " + (dir == 1 ? "LONG" : "SHORT") + " because Daily says " + dBiasTxt + ". My 4H zone is " + f_px(z.lo) + "-" + f_px(z.hi) + " because it contains " + z.names + ". On 15M, confirmation was " + z.trigName + (shifted ? " + structure shift through " + f_px(shiftLvl) : " (continuation retest)") + ". I am wrong at " + f_px(sl) + ". My target is " + f_px(tg) + " because it is the " + tgName + ". My risk is " + str.tostring(riskAmt, "#") + " " + accountCcy + " (" + str.tostring(riskPctEff, "#.##") + "%). " + (chase ? "Price ran past the anti-chase distance, so this is a LIMIT at the retest level." : "I am not chasing.")
                             string msg = "[15M] " + syminfo.ticker + " " + (chase ? side + " LIMIT @ " + f_px(entry) + " (valid " + str.tostring(limitBars) + " bars)" : "MARKET " + side + " @ " + f_px(entry)) + "\nSL " + f_px(sl) + " (" + str.tostring(riskPx / pip, "#.0") + (isFx ? " pips" : " bp") + ") · TP " + f_px(tg) + " (" + str.tostring(rr, "#.0") + "R, " + tgName + ")\nSize " + (isFx ? str.tostring(units / 100000, "#.00") + " lots" : str.tostring(units) + " " + syminfo.basecurrency) + " · risk " + str.tostring(riskAmt, "#") + " " + accountCcy + " (" + str.tostring(riskPctEff, "#.##") + "%) · 1 " + (isFx ? "pip = " + str.tostring(pipValAcc, "#.##") + " " + accountCcy + " per lot" : "bp = " + str.tostring(pipValAcc, "#.####") + " " + accountCcy + " per unit") + " at the live rate\n" + tags + "\n" + lastScript
