@@ -2,7 +2,10 @@
 
 ## Trading System v8 (in progress): Daily → 4H → 15M
 
-Built from the *Trading System v8* execution manual. One script per job, in the manual's order:
+Built from the *Trading System v8* execution manual. One script per job, in the manual's order.
+
+**Instruments:** forex uses normal pips. On anything else (BTC, stocks, indices) every "pip" setting means **1 basis point (0.01%) of price**,
+round numbers are powers of ten (e.g. 1,000s on BTC), and position size is rounded to 0.0001 (crypto) or 1 (other) instead of 0.01 lot.
 
 | Script | Manual part | Status |
 |---|---|---|

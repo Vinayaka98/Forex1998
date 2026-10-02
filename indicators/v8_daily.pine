@@ -51,7 +51,13 @@ alertDaily = input.bool(false, "Alert: Daily sentence at every daily close", gro
 // ─────────────────────────────────────────────────────────────────────────────
 // Basics
 // ─────────────────────────────────────────────────────────────────────────────
-float pip = syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1)
+// "pip": forex = the usual pip; anything else (BTC, stocks, indices) = 1 basis point (0.01%) of the
+// first price on the chart, so every pip-based setting scales with the instrument.
+bool  isFx = syminfo.type == "forex"
+var float bpUnit = na
+if na(bpUnit)
+    bpUnit := close * 0.0001
+float pip = isFx ? syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1) : bpUnit
 float atr = ta.atr(atrLen)
 float hS  = ta.hma(close, hmaSlowLen)
 float hF  = ta.hma(close, hmaFastLen)

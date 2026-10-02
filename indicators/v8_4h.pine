@@ -53,7 +53,13 @@ alertPlan  = input.bool(false, "Alert: 4H sentence at every 4H close", group = G
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers (identical logic to v8 Daily)
 // ─────────────────────────────────────────────────────────────────────────────
-float pip = syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1)
+// "pip": forex = the usual pip; anything else (BTC, stocks, indices) = 1 basis point (0.01%) of the
+// first price on the chart, so every pip-based setting scales with the instrument.
+bool  isFx = syminfo.type == "forex"
+var float bpUnit = na
+if na(bpUnit)
+    bpUnit := close * 0.0001
+float pip = isFx ? syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1) : bpUnit
 f_px(float p) => na(p) ? "n/a" : str.tostring(p, format.mintick)
 
 // Alternating zigzag of meaningful swings. `t` holds the swing candle's open time.
@@ -491,11 +497,11 @@ if barstate.islast
             f_add(lvP, lvC, lvN, gTop.get(i), "E", "gap edge")
             f_add(lvP, lvC, lvN, gBot.get(i), "E", "gap edge")
     if useRound
-        float rStep = 50 * pip
+        float rStep = isFx ? 50 * pip : math.pow(10, math.floor(math.log10(price)) - 1)
         float rBase = math.floor(price / rStep) * rStep
         for k = -4 to 5
             float rv = rBase + k * rStep
-            f_add(lvP, lvC, lvN, rv, "E", math.abs(rv / (100 * pip) - math.round(rv / (100 * pip))) < 0.01 ? "round 00" : "round 50")
+            f_add(lvP, lvC, lvN, rv, "E", not isFx ? "round number" : math.abs(rv / (100 * pip) - math.round(rv / (100 * pip))) < 0.01 ? "round 00" : "round 50")
 
     int lc = lvP.size()
     // H10: cluster sorted levels into zones no wider than clusterAtr × 4H ATR

@@ -31,7 +31,8 @@ accountCcy  = input.string("CAD", "Account currency", group = G_R)
 riskPct     = input.float(0.1, "Risk per trade %", minval = 0.01, maxval = 0.1, step = 0.01, group = G_R, tooltip = "The manual caps this at 0.1%.")
 maxOpen     = input.int(3, "Max open positions (this pair)", minval = 1, maxval = 3, group = G_R)
 maxOpenRisk = input.float(0.2, "Max open risk % (this pair)", minval = 0.1, maxval = 0.3, step = 0.05, group = G_R, tooltip = "Trades whose stop is not yet at break-even or better count as open risk. Correlated risk across pairs cannot be seen from one chart: check it yourself.")
-spreadPips  = input.float(1.0, "Spread + commission (pips): added to the stop buffer and charged in the results", minval = 0, step = 0.1, group = G_R)
+spreadPips  = input.float(1.0, "Spread + commission (pips; non-FX: basis points of price)", minval = 0, step = 0.1, group = G_R, tooltip = "Added to the stop buffer and charged in the results. For BTC/stocks 1 = 0.01% of price.")
+qtyStepIn   = input.float(0, "Quantity step (0 = auto)", minval = 0, group = G_R, tooltip = "Auto: forex 1,000 units (0.01 lot), crypto 0.0001, everything else 1. Position size is rounded down to this.")
 
 dSwingLen  = input.int(5, "Daily swing strength", minval = 2, group = G_D)
 dMinRevAtr = input.float(1.5, "Daily meaningful swing (× Daily ATR)", minval = 0, step = 0.1, group = G_D)
@@ -52,7 +53,7 @@ gapMinPct  = input.float(30, "Gaps: min size (% of 4H ATR)", minval = 0, group =
 useRound   = input.bool(true, "Round numbers (00 / 50) as category E", group = G_4)
 obstacleMd = input.string("Serious obstacles", "First obstacle / target (H13, M13)", options = ["Serious obstacles", "Any single level (strict)"], group = G_4, tooltip = "Serious = the nearest cluster with 2+ evidence categories, a Daily/4H swing, or a 4H Fib extension. Strict = any single value / volume / swing / gap level, which in a crowded area rarely leaves 2R of room.")
 
-binPips    = input.float(2.0, "Profile bucket size (pips)", minval = 0.5, step = 0.5, group = G_VP)
+binPips    = input.float(2.0, "Profile bucket size (pips; non-FX: basis points)", minval = 0.5, step = 0.5, group = G_VP)
 vaPct      = input.float(70, "Value area %", minval = 50, maxval = 95, group = G_VP)
 vpRows     = input.int(100, "Rows for HVN / LVN detection", minval = 20, maxval = 300, group = G_VP)
 vrvp4hDays = input.int(28, "4H VRVP stand-in window (days)", minval = 7, group = G_VP)
@@ -92,7 +93,13 @@ const int    DAY = 86400000
 // ─────────────────────────────────────────────────────────────────────────────
 // Shared helpers (identical to v8 Daily / v8 4H)
 // ─────────────────────────────────────────────────────────────────────────────
-float pip   = syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1)
+// "pip": forex = the usual pip; anything else (BTC, stocks, indices) = 1 basis point (0.01%) of the
+// first price on the chart, so every pip-based setting scales with the instrument.
+bool  isFx = syminfo.type == "forex"
+var float bpUnit = na
+if na(bpUnit)
+    bpUnit := close * 0.0001
+float pip = isFx ? syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1) : bpUnit
 float binSz = binPips * pip
 float atr15 = ta.atr(atrLen)
 f_px(float p) => na(p) ? "n/a" : str.tostring(p, format.mintick)
@@ -663,11 +670,11 @@ if replan
     f_add(lvP, lvC, lvN, g4DnB, "E", "gap edge")
     f_add(lvP, lvC, lvN, g4DnT, "E", "gap edge")
     if useRound
-        float rStep = 50 * pip
+        float rStep = isFx ? 50 * pip : math.pow(10, math.floor(math.log10(price)) - 1)
         float rBase = math.floor(price / rStep) * rStep
         for k = -4 to 5
             float rv = rBase + k * rStep
-            f_add(lvP, lvC, lvN, rv, "E", math.abs(rv / (100 * pip) - math.round(rv / (100 * pip))) < 0.01 ? "round 00" : "round 50")
+            f_add(lvP, lvC, lvN, rv, "E", not isFx ? "round number" : math.abs(rv / (100 * pip) - math.round(rv / (100 * pip))) < 0.01 ? "round 00" : "round 50")
 
     int lc = lvP.size()
     // Cluster into zones
@@ -996,9 +1003,10 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
                         why := f_skip("opposite position open")
                     string side = dir == 1 ? "BUY" : "SELL"
                     if why == ""
-                        float units = qRate > 0 ? math.floor(riskAmt / (riskPx * qRate) / 1000) * 1000 : na
-                        if na(units) or units < 1000
-                            why := f_skip("position size below 0.01 lot")
+                        float qStep = qtyStepIn > 0 ? qtyStepIn : isFx ? 1000 : syminfo.type == "crypto" ? 0.0001 : 1
+                        float units = qRate > 0 ? math.floor(riskAmt / (riskPx * qRate * syminfo.pointvalue) / qStep) * qStep : na
+                        if na(units) or units < qStep
+                            why := f_skip("position size below the minimum quantity")
                         else
                             string id = (dir == 1 ? "L" : "S") + str.tostring(bar_index)
                             string tags = "Setup " + z.setup + " · " + z.trigName + (shifted ? " + shift" : " (continuation)") + " · VWAP " + (vwapFor ? "with" : "against") + " · Vol " + (volOk ? "OK" : "weak") + " · HMA55 " + (hfDir == dir ? "with" : hfDir == 0 ? "flat" : "against")
@@ -1013,7 +1021,7 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
                             nEntry += 1
                             nLimitPlaced += chase ? 1 : 0
                             lastScript := "I am trading " + (dir == 1 ? "LONG" : "SHORT") + " because Daily says " + dBiasTxt + ". My 4H zone is " + f_px(z.lo) + "-" + f_px(z.hi) + " because it contains " + z.names + ". On 15M, confirmation was " + z.trigName + (shifted ? " + structure shift through " + f_px(shiftLvl) : " (continuation retest)") + ". I am wrong at " + f_px(sl) + ". My target is " + f_px(tg) + " because it is the " + tgName + ". My risk is " + str.tostring(riskPct) + "%. " + (chase ? "Price ran past the anti-chase distance, so this is a LIMIT at the retest level." : "I am not chasing.")
-                            string msg = "[15M] " + syminfo.ticker + " " + (chase ? side + " LIMIT @ " + f_px(entry) + " (valid " + str.tostring(limitBars) + " bars)" : "MARKET " + side + " @ " + f_px(entry)) + "\nSL " + f_px(sl) + " (" + str.tostring(riskPx / pip, "#.0") + " pips) · TP " + f_px(tg) + " (" + str.tostring(rr, "#.0") + "R, " + tgName + ")\nSize " + str.tostring(units / 100000, "#.00") + " lots (" + str.tostring(riskPct) + "% = " + str.tostring(riskAmt, "#") + " " + accountCcy + ")\n" + tags + "\n" + lastScript
+                            string msg = "[15M] " + syminfo.ticker + " " + (chase ? side + " LIMIT @ " + f_px(entry) + " (valid " + str.tostring(limitBars) + " bars)" : "MARKET " + side + " @ " + f_px(entry)) + "\nSL " + f_px(sl) + " (" + str.tostring(riskPx / pip, "#.0") + (isFx ? " pips" : " bp") + ") · TP " + f_px(tg) + " (" + str.tostring(rr, "#.0") + "R, " + tgName + ")\nSize " + (isFx ? str.tostring(units / 100000, "#.00") + " lots" : str.tostring(units) + " " + syminfo.basecurrency) + " (" + str.tostring(riskPct) + "% = " + str.tostring(riskAmt, "#") + " " + accountCcy + ")\n" + tags + "\n" + lastScript
                             alert(msg, alert.freq_once_per_bar_close)
                             label.new(bar_index, dir == 1 ? low : high, (chase ? side + " LMT " : side + " ") + str.tostring(rr, "#.0") + "R", style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? color.teal : color.red, textcolor = color.white, size = size.small, tooltip = msg)
                             z.status := (chase ? "limit signal" : "signal") + " given: wait for price to leave the zone"
