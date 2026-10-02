@@ -21,13 +21,15 @@ const string G_M  = "15M execution"
 const string G_T  = "Trade management"
 const string G_O  = "Display & alerts"
 
-accountSize = input.float(120000, "Account size", minval = 1, group = G_R)
-accountCcy  = input.string("CAD", "Account currency", group = G_R)
-riskPct     = input.float(0.1, "Risk per trade %", minval = 0.01, maxval = 0.1, step = 0.01, group = G_R, tooltip = "The manual caps this at 0.1%.")
+accountSize = input.float(120000, "Account size (USD)", minval = 1, group = G_R)
+riskMode    = input.string("% of account", "Risk per trade", options = ["% of account", "Fixed USD"], group = G_R)
+riskPct     = input.float(0.1, "Risk % (when '% of account')", minval = 0.01, maxval = 0.1, step = 0.01, group = G_R, tooltip = "The manual caps this at 0.1%.")
+riskUsd     = input.float(120, "Risk USD (when 'Fixed USD')", minval = 1, group = G_R)
 maxOpen     = input.int(3, "Max open positions (this pair)", minval = 1, maxval = 3, group = G_R)
 maxOpenRisk = input.float(0.2, "Max open risk % (this pair)", minval = 0.1, maxval = 0.3, step = 0.05, group = G_R, tooltip = "Trades whose stop is not yet at break-even or better count as open risk. Correlated risk across pairs cannot be seen from one chart: check it yourself.")
 spreadPips  = input.float(1.0, "Spread + commission (pips; non-FX: basis points of price)", minval = 0, step = 0.1, group = G_R, tooltip = "Added to the stop buffer and charged in the results. For BTC/stocks 1 = 0.01% of price.")
 qtyStepIn   = input.float(0, "Quantity step (0 = auto)", minval = 0, group = G_R, tooltip = "Auto: forex 1,000 units (0.01 lot), crypto 0.0001, everything else 1. Position size is rounded down to this.")
+pipIn      = input.float(0, "Pip size override (0 = auto)", minval = 0, group = G_R, tooltip = "Auto: forex = the pair's normal pip (0.0001, or 0.01 for JPY pairs); anything else = 0.01% of the current price, recalculated on every bar. Enter a value to force your own pip size.")
 
 dSwingLen  = input.int(5, "Daily swing strength", minval = 2, group = G_D)
 dMinRevAtr = input.float(1.5, "Daily meaningful swing (× Daily ATR)", minval = 0, step = 0.1, group = G_D)
@@ -89,9 +91,9 @@ const int    DAY = 86400000
 // Shared helpers (identical to v8 Daily / v8 4H)
 // ─────────────────────────────────────────────────────────────────────────────
 // "pip": forex = the usual pip; anything else (BTC, stocks, indices, futures) = 1 basis point (0.01%)
-// of the current price, so every pip-based setting scales with the instrument and its price level.
+// of the current price, recalculated every bar, so pip settings follow the market. "Pip size" overrides it.
 bool  isFx = syminfo.type == "forex"
-float pip  = isFx ? syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1) : close * 0.0001
+float pip  = pipIn > 0 ? pipIn : isFx ? syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1) : close * 0.0001
 // Logarithmic price buckets: bucket k covers [exp(k·lnStep), exp((k+1)·lnStep))
 float lnStep = math.log(1 + binBp / 10000)
 f_key(float p) => math.floor(math.log(math.max(p, 1e-10)) / lnStep)
@@ -515,8 +517,12 @@ bool inWin = not useWin or not na(time(timeframe.period, sessWin, TZ))
 
 // Stablecoin-quoted crypto (BTCUSDT…) is converted as USD
 string qCcy   = syminfo.currency == "USDT" or syminfo.currency == "USDC" or syminfo.currency == "BUSD" or syminfo.currency == "FDUSD" or syminfo.currency == "DAI" ? "USD" : syminfo.currency
-float qRate   = qCcy == accountCcy ? 1.0 : request.currency_rate(qCcy, accountCcy, true)
-float riskAmt = accountSize * riskPct / 100
+// Account is in USD. USD-quoted symbols (EURUSD, BTCUSD, US stocks) need no conversion.
+// Non-USD quotes (USDJPY, USDCAD, USDCHF…) are valued at the live rate, so the pip value moves with the market.
+float qRate   = qCcy == "USD" ? 1.0 : request.currency_rate(qCcy, "USD", true)
+float riskAmt = riskMode == "Fixed USD" ? riskUsd : accountSize * riskPct / 100
+float riskPctEff = riskAmt / accountSize * 100
+float pipValUsd = pip * syminfo.pointvalue * qRate * (isFx ? 100000 : 1)
 
 // ─────────────────────────────────────────────────────────────────────────────
 // 4H zones, rebuilt at every 4H close and whenever the Daily bias changes
@@ -989,7 +995,7 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
                         why := f_skip("only " + str.tostring(rr, "#.0") + "R before " + tgName)
                     else if trades.size() >= maxOpen
                         why := f_skip("max " + str.tostring(maxOpen) + " positions")
-                    else if (atRisk + 1) * riskPct > maxOpenRisk + 1e-9
+                    else if (atRisk + 1) * riskPctEff > maxOpenRisk + 1e-9
                         why := f_skip("open risk would exceed " + str.tostring(maxOpenRisk) + "%")
                     else if loser
                         why := f_skip("never add to a loser")
@@ -1012,8 +1018,8 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
                             trades.push(Trade.new(id, dir, bar_index, entry, sl, tg, riskPx, not chase, chase, lE, lS, lT))
                             nEntry += 1
                             nLimitPlaced += chase ? 1 : 0
-                            lastScript := "I am trading " + (dir == 1 ? "LONG" : "SHORT") + " because Daily says " + dBiasTxt + ". My 4H zone is " + f_px(z.lo) + "-" + f_px(z.hi) + " because it contains " + z.names + ". On 15M, confirmation was " + z.trigName + (shifted ? " + structure shift through " + f_px(shiftLvl) : " (continuation retest)") + ". I am wrong at " + f_px(sl) + ". My target is " + f_px(tg) + " because it is the " + tgName + ". My risk is " + str.tostring(riskPct) + "%. " + (chase ? "Price ran past the anti-chase distance, so this is a LIMIT at the retest level." : "I am not chasing.")
-                            string msg = "[15M] " + syminfo.ticker + " " + (chase ? side + " LIMIT @ " + f_px(entry) + " (valid " + str.tostring(limitBars) + " bars)" : "MARKET " + side + " @ " + f_px(entry)) + "\nSL " + f_px(sl) + " (" + str.tostring(riskPx / pip, "#.0") + (isFx ? " pips" : " bp") + ") · TP " + f_px(tg) + " (" + str.tostring(rr, "#.0") + "R, " + tgName + ")\nSize " + (isFx ? str.tostring(units / 100000, "#.00") + " lots" : str.tostring(units) + " " + syminfo.basecurrency) + " (" + str.tostring(riskPct) + "% = " + str.tostring(riskAmt, "#") + " " + accountCcy + ")\n" + tags + "\n" + lastScript
+                            lastScript := "I am trading " + (dir == 1 ? "LONG" : "SHORT") + " because Daily says " + dBiasTxt + ". My 4H zone is " + f_px(z.lo) + "-" + f_px(z.hi) + " because it contains " + z.names + ". On 15M, confirmation was " + z.trigName + (shifted ? " + structure shift through " + f_px(shiftLvl) : " (continuation retest)") + ". I am wrong at " + f_px(sl) + ". My target is " + f_px(tg) + " because it is the " + tgName + ". My risk is $" + str.tostring(riskAmt, "#") + " (" + str.tostring(riskPctEff, "#.##") + "%). " + (chase ? "Price ran past the anti-chase distance, so this is a LIMIT at the retest level." : "I am not chasing.")
+                            string msg = "[15M] " + syminfo.ticker + " " + (chase ? side + " LIMIT @ " + f_px(entry) + " (valid " + str.tostring(limitBars) + " bars)" : "MARKET " + side + " @ " + f_px(entry)) + "\nSL " + f_px(sl) + " (" + str.tostring(riskPx / pip, "#.0") + (isFx ? " pips" : " bp") + ") · TP " + f_px(tg) + " (" + str.tostring(rr, "#.0") + "R, " + tgName + ")\nSize " + (isFx ? str.tostring(units / 100000, "#.00") + " lots" : str.tostring(units) + " " + syminfo.basecurrency) + " · risk $" + str.tostring(riskAmt, "#") + " (" + str.tostring(riskPctEff, "#.##") + "%) · 1 " + (isFx ? "pip = $" + str.tostring(pipValUsd, "#.##") + " per lot" : "bp = $" + str.tostring(pipValUsd, "#.####") + " per unit") + " at the current price\n" + tags + "\n" + lastScript
                             alert(msg, alert.freq_once_per_bar_close)
                             label.new(bar_index, dir == 1 ? low : high, (chase ? side + " LMT " : side + " ") + str.tostring(rr, "#.0") + "R", style = dir == 1 ? label.style_label_up : label.style_label_down, color = dir == 1 ? color.teal : color.red, textcolor = color.white, size = size.small, tooltip = msg)
                             z.status := (chase ? "limit signal" : "signal") + " given: wait for price to leave the zone"

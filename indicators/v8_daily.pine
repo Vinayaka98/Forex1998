@@ -47,14 +47,15 @@ showGaps   = input.bool(true, "Draw gaps", group = G_OUT)
 showBg     = input.bool(true, "Shade background by bias", group = G_OUT)
 showTable  = input.bool(true, "Daily table", group = G_OUT)
 alertDaily = input.bool(false, "Alert: Daily sentence at every daily close", group = G_OUT)
+pipIn      = input.float(0, "Pip size override (0 = auto)", minval = 0, group = G_OUT, tooltip = "Auto: forex = the pair's normal pip (0.0001, or 0.01 for JPY pairs); anything else = 0.01% of the current price, recalculated on every bar. Enter a value to force your own pip size.")
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Basics
 // ─────────────────────────────────────────────────────────────────────────────
 // "pip": forex = the usual pip; anything else (BTC, stocks, indices, futures) = 1 basis point (0.01%)
-// of the current price, so every pip-based setting scales with the instrument and its price level.
+// of the current price, recalculated every bar, so pip settings follow the market. "Pip size" overrides it.
 bool  isFx = syminfo.type == "forex"
-float pip  = isFx ? syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1) : close * 0.0001
+float pip  = pipIn > 0 ? pipIn : isFx ? syminfo.mintick * (syminfo.pricescale == 100000 or syminfo.pricescale == 1000 ? 10 : 1) : close * 0.0001
 float atr = ta.atr(atrLen)
 float hS  = ta.hma(close, hmaSlowLen)
 float hF  = ta.hma(close, hmaFastLen)
