@@ -67,6 +67,7 @@ storeDays  = input.int(200, "15M history kept for impulse profiles (days)", minv
 swingLen15 = input.int(3, "15M swing strength (bars each side)", minval = 1, group = G_M)
 armBars    = input.int(48, "Zone stays armed after first touch (15M bars)", minval = 4, group = G_M, tooltip = "48 bars = 12 hours. After that, price must leave the zone and come back.")
 trigWindow = input.int(8, "Structure shift must follow the trigger within (bars)", minval = 1, group = G_M)
+freshBars  = input.int(32, "Shift level = 15M swing formed at most N bars before the zone touch", minval = 4, group = G_M, tooltip = "M1/M9: the level to break is the most recent swing of the move INTO the zone. Older swings are ignored so a stale level cannot count as a shift.")
 wickMult   = input.float(1.5, "Rejection wick ≥ body ×", minval = 0.5, step = 0.1, group = G_M)
 engulfPos  = input.float(0.7, "Engulfing closes in the top/bottom (1 - x) of its range", minval = 0.5, maxval = 1, step = 0.05, group = G_M)
 dtapTol    = input.float(0.25, "Double tap: 2nd test may undercut by ATR ×", minval = 0, step = 0.05, group = G_M)
@@ -88,7 +89,7 @@ sessWin    = input.session("0300-1600", "Entry window (NY time)", group = G_M)
 exitMode   = input.string("Full planned target (T4)", "Exit protocol", options = ["Full planned target (T4)", "Trail 15M structure after 1.5R (T3)"], group = G_T, tooltip = "T4: stop or full target, nothing else (the manual's base protocol for clean statistics). T3: after +1.5R the stop follows newly confirmed 15M swings.")
 
 showZones  = input.bool(true, "Draw zones", group = G_O)
-showBlock  = input.bool(true, "Mark skipped setups (hover for reason)", group = G_O)
+showBlock  = input.bool(false, "Mark skipped setups (hover for reason)", group = G_O, tooltip = "Off by default: TradingView keeps only the newest ~500 labels, and skip markers would push older trades off the chart.")
 showTable  = input.bool(true, "15M table", group = G_O)
 alertArm   = input.bool(false, "Alert: price entered a zone", group = G_O)
 
@@ -554,6 +555,7 @@ type Zone
     string status    = "waiting for price"
 
 var array<Zone>   zones = array.new<Zone>()
+var array<box>    liveBoxes = array.new<box>()
 var array<float>  tgP   = array.new<float>()
 var array<string> tgN   = array.new<string>()
 var int minCats = 2
@@ -796,11 +798,15 @@ if replan
     nBiasPlans += bias != 0 ? 1 : 0
     nZonePlans += zones.size() > 0 ? 1 : 0
 
+    // Only the current plan's zones are drawn (replaced at every 4H close) so the drawing budget is kept for trades
+    for b in liveBoxes
+        b.delete()
+    liveBoxes.clear()
     if showZones
         int k = 0
         for z in zones
             color zc0 = bias == 1 ? color.teal : color.maroon
-            box.new(bar_index, z.hi, bar_index + 16, z.lo, border_color = color.new(zc0, k == 0 ? 20 : 60), bgcolor = color.new(zc0, k == 0 ? 82 : 92), text = k == 0 ? "Z1 [" + z.cats + "]" : "Z2 [" + z.cats + "]", text_size = size.tiny, text_color = color.new(zc0, 30), text_halign = text.align_left, text_valign = text.align_top)
+            liveBoxes.push(box.new(bar_index, z.hi, bar_index + 16, z.lo, border_color = color.new(zc0, k == 0 ? 20 : 60), bgcolor = color.new(zc0, k == 0 ? 82 : 92), text = k == 0 ? "Z1 [" + z.cats + "]" : "Z2 [" + z.cats + "]", text_size = size.tiny, text_color = color.new(zc0, 30), text_halign = text.align_left, text_valign = text.align_top))
             k += 1
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -920,6 +926,8 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
                 bestRun := math.max(bestRun, run)
             z.setup  := wasOther and bestRun >= acceptBars ? "B" : "A"
             z.status := "in zone: waiting for trigger"
+            if showZones
+                box.new(bar_index, z.hi, bar_index + 4, z.lo, border_color = color.new(dir == 1 ? color.teal : color.maroon, 50), bgcolor = color.new(dir == 1 ? color.teal : color.maroon, 90))
             nArms += 1
             if alertArm
                 alert("[15M] " + syminfo.ticker + " in " + (dir == 1 ? "LONG" : "SHORT") + " Zone " + str.tostring(zi) + " " + f_px(z.lo) + "-" + f_px(z.hi) + ": waiting for a trigger", alert.freq_once_per_bar_close)
@@ -945,7 +953,9 @@ if barstate.isconfirmed and dBias != 0 and zones.size() > 0
                 float wick  = dir == 1 ? math.min(open, close) - low : high - math.max(open, close)
                 bool  tWick = inBar and rng > 0 and wick > 0 and wick >= wickMult * body and (dir == 1 ? close >= low + 0.5 * rng : close <= high - 0.5 * rng)
                 bool  tEng  = (inBar or inPrv) and rng > 0 and (dir == 1 ? close > open and close[1] < open[1] and close >= open[1] and open <= close[1] and close >= low + engulfPos * rng : close < open and close[1] > open[1] and close <= open[1] and open >= close[1] and close <= high - engulfPos * rng)
-                float shiftLvl = dir == 1 ? sh1 : sl1
+                // M9: the lower high (long) / higher low (short) of the move into the zone, not a stale swing
+                bool  freshLvl = dir == 1 ? not na(shBar) and shBar >= z.armBar - freshBars and sh1 > z.sweep : not na(slBar) and slBar >= z.armBar - freshBars and sl1 < z.sweep
+                float shiftLvl = freshLvl ? (dir == 1 ? sh1 : sl1) : na
                 bool  shifted  = not na(shiftLvl) and (dir == 1 ? close > shiftLvl : close < shiftLvl)
                 bool  tTap = not na(z.tap1) and not na(z.tap2) and (dir == 1 ? z.tap2 >= z.tap1 - dtapTol * atr15 : z.tap2 <= z.tap1 + dtapTol * atr15) and shifted
                 if tTap or tEng or tWick

@@ -64,7 +64,7 @@ Self-contained: it recomputes the Daily bias and rebuilds the 4H zones at every 
 | Step | Mechanized as |
 |---|---|
 | M0 | Nothing happens until price trades into Zone 1 or Zone 2 (zone "armed" for up to 48 bars; afterwards price must leave and come back). |
-| M1/M9 | 15M swings (3 bars each side). Structure shift = close through the latest 15M swing high (long) / low (short) within 8 bars of the trigger. Continuation exception: Setup B or 15M structure already HH/HL (LL/LH). Setup B = within the last 96 bars price was on the other side of the zone, broke through and was **accepted** beyond it (4 consecutive 15M closes) before the retest; otherwise Setup A. |
+| M1/M9 | 15M swings (3 bars each side). Structure shift = close through the latest 15M swing high (long) / low (short) of the move into the zone (formed at most 32 bars before the zone touch, beyond the sweep), within 8 bars of the trigger. Continuation exception: Setup B or 15M structure already HH/HL (LL/LH). Setup B = within the last 96 bars price was on the other side of the zone, broke through and was **accepted** beyond it (4 consecutive 15M closes) before the retest; otherwise Setup A. |
 | M2 | Chop = 3 of 5 signs: ≥ 4 colour flips in 6 candles, ≥ 3 two-sided-wick candles, flat VWAP crossed ≥ 3× in 12 bars, flat HMA 55, session POC crossed ≥ 3× in 12 bars. |
 | M3/M4 | Session VWAP and session volume profile. Skip only when **both** are strongly against (price on the wrong side of a VWAP sloping against the trade **and** beyond sVAL/sVAH); otherwise recorded as a flag. |
 | M5/M6 | HMA 55 and volume ≥ 1.2× MA20: recorded as flags on every trade (volume can be made mandatory). |
@@ -79,7 +79,7 @@ Self-contained: it recomputes the Daily bias and rebuilds the 4H zones at every 
 
 Table: bias, zones and their state, chop score, VWAP/SVP, news, open trades, results in R after costs (stop assumed first when a candle hits both), **the funnel**
 (4H plans → with Daily bias → with a zone → zone touches → triggers → confirmed → signals) and the top skip reasons, so you can see where setups stop.
-Every order alert includes the manual's pre-click script. Skipped setups are marked with a grey × (hover for the reason).
+Every order alert includes the manual's pre-click script. Drawing budget: TradingView keeps only the newest ~500 labels/lines and ~300 boxes per script, so only the live zones are redrawn each 4H, a small box marks each zone touch, and skip markers (grey ×, hover for the reason) are off by default. The Strategy Tester's *List of trades* always has every trade.
 Not checked: correlated USD exposure across pairs (one chart cannot see other charts).
 
 ### v8 strategy (`strategies/v8_15m_strategy.pine`), for backtesting
